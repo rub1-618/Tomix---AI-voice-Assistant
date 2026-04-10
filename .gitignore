@@ -1,0 +1,13 @@
+# müll
+__pycache__/
+*.py[cod]
+.venv/
+.env
+
+# Rust Müll
+/target/
+Cargo.lock
+
+# Einstellungen von IDEs
+.idea/
+.vscode/

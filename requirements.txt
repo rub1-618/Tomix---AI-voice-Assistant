@@ -1,0 +1,27 @@
+# ── JARVIS — зависимости Python ───────────────────────────────────────────────
+# Установка: pip install -r requirements.txt
+
+# AI — НОВАЯ библиотека Gemini (заменяет устаревшую google-generativeai)
+google-genai
+
+# Распознавание речи + аудио
+SpeechRecognition
+pyaudio              # бэкенд для микрофона (требует PortAudio на Windows)
+
+# Синтез речи
+pyttsx3              # TTS через SAPI5 (встроен в Windows, не нужны ключи)
+
+# Нечёткое сравнение строк
+fuzzywuzzy
+python-Levenshtein   # C-ускоритель для fuzzywuzzy
+
+# Системный мониторинг (Python-fallback пока не скомпилирован Rust-модуль)
+psutil
+GPUtil
+
+# UI
+flet                 # >= 0.21 поддерживает ft.animation.Animation
+
+# Сборщик Rust-модуля (нужен только для компиляции jarvis_stats)
+maturin
+setuptools

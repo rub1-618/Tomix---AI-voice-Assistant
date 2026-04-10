@@ -1,0 +1,13 @@
+[package]
+name = "jarvis_stats"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "jarvis_stats"
+ctype = ["cdylib"]  # cdylib = библиотека для Python
+
+[dependencies]
+pyo3 = { version = "0.23", features = ["extension-module"] }
+sysinfo = "0.32"
+nvml-wrapper = "0.10"
