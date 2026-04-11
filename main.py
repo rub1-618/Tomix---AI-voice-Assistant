@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 import certifi
 
-# Фикс SSL — без этого google-genai долго ждёт при первом запросе
+# без цього google-genai довго стартує
 os.environ["SSL_CERT_FILE"] = certifi.where()
 os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
 
@@ -62,7 +62,7 @@ log_queue: queue.Queue = queue.Queue()
 tts_rate: int = 220
 tts_volume: float = 1.0
 
-# Индексы голосов SAPI5 — узнали командой enumerate(voices)
+# індекси голосів (дізнався через enumerate(voices))
 VOICE_RU = 4  # Vsevolod (RHVoice)
 VOICE_EN = 1  # Microsoft David Desktop
 
@@ -73,7 +73,7 @@ def split_by_language(text: str) -> list:
     Пример: "Открываю VS Code, сэр" 
          -> [("ru","Открываю"), ("en","VS Code"), ("ru",", сэр")]
     """
-    # Разделяем по блокам латиницы
+    # ділимо текст на латиницю і кирилицю
     parts = re.split(r'([A-Za-z][A-Za-z0-9\s\-_]*)', text)
     result = []
     for part in parts:
@@ -94,17 +94,17 @@ def _say_text(text: str, voice_idx: int) -> None:
     Каждый вызов — отдельный процесс PowerShell, который говорит и завершается.
     """
     try:
-        # Экранируем кавычки чтобы неломать PowerShell команду
+        # прибираємо лапки щоб не зламати PowerShell
         safe_text = text.replace("'", " ").replace('"', ' ')
 
-        # Получаем имя голоса по индексу через pyttsx3 (только для получения имени)
+        # беремо ім'я голосу за індексом
         import pyttsx3 as _pyttsx3
         _e = _pyttsx3.init("sapi5")
         _voices = _e.getProperty("voices")
         _e.stop()
         voice_name = _voices[voice_idx].name if voice_idx < len(_voices) else _voices[0].name
 
-        # PowerShell скрипт: выбираем голос по имени и озвучиваем
+        # запускаємо PowerShell і озвучуємо
         ps_script = (
             f"Add-Type -AssemblyName System.Speech; "
             f"$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
@@ -127,7 +127,7 @@ def _say_text(text: str, voice_idx: int) -> None:
 def speech_worker() -> None:
     global is_speaking
 
-    # Получаем список голосов для вывода в лог
+    # виводимо список голосів при старті
     try:
         import pyttsx3 as _pyttsx3
         _e = _pyttsx3.init("sapi5")
@@ -264,7 +264,7 @@ def verify_plugin_code(code: str) -> dict:
         )
         raw = response.text.strip()
         print(f"[debug][verify] Gemini відповів: {repr(raw[:200])}")
-        # Прибираємо markdown якщо Gemini обгорнув відповідь
+        # прибираємо markdown з відповіді
         start = raw.find("{")
         end = raw.rfind("}") + 1
         if start >= 0 and end > start:
@@ -298,7 +298,7 @@ def save_to_history(user_text: str, jarvis_text: str) -> None:
             "user": user_text,
             "jarvis": jarvis_text,
         })
-        # Храним только последние MAX_HISTORY записей
+        # зберігаємо тільки останні 100
         history = history[-MAX_HISTORY:]
         MEMORY_FILE.parent.mkdir(parents=True, exist_ok=True)
         with open(MEMORY_FILE, "w", encoding="utf-8") as f:
@@ -353,7 +353,7 @@ def ask_ai(message: str) -> str:
     if not _ai_model:
         _ai_model = get_best_model()
     try:
-        # Передаём историю как контекст
+        # передаємо історію щоб модель памятала контекст
         context = build_gemini_context(message)
         response = _ai_client.models.generate_content(
             model=_ai_model,
@@ -365,7 +365,7 @@ def ask_ai(message: str) -> str:
             ),
         )
         answer = response.text.strip()
-        # Сохраняем диалог в файл
+        # зберігаємо в файл
         save_to_history(message, answer)
         return answer
     except Exception as e:
@@ -399,11 +399,11 @@ def analyze_screen(prompt: str = "Що ти бачиш на екрані? Опи
     if not _ai_model:
         _ai_model = get_best_model()
     try:
-        # Отримуємо Base64 скріншот з Rust модуля
+        # скріншот з Rust модуля
         b64_image = screen_catcher.capture_screen_base64()
         print(f"[info] Скріншот отримано: {len(b64_image)} символів")
 
-        # Відправляємо в Gemini Vision через types.Part
+        # відправляємо в Gemini Vision
         import base64 as _base64
         image_bytes = _base64.b64decode(b64_image)
 
@@ -482,7 +482,7 @@ def parse_dictation(query):
             text = query[len(kw):].strip()
             if text:
                 return text
-    # Також перевіряємо через regex якщо слово не на початку
+    # ще раз через regex на всяк випадок
     m = re.search(r'(?:напиши|надрукуй|друкуй|пиши|написати)\s+(.+)', query)
     return m.group(1).strip() if m else None
 
@@ -493,28 +493,28 @@ def type_text(text):
     """
     try:
         import pyperclip
-        # Зберігаємо старий вміст буферу
+        # зберігаємо старий буфер
         try:
             old_clipboard = pyperclip.paste()
         except Exception:
             old_clipboard = ""
 
-        # Копіюємо текст в буфер
+        # копіюємо текст
         pyperclip.copy(text)
 
-        # Чекаємо поки користувач клікне в потрібне поле
+        # час клікнути в поле вводу
         time.sleep(1.5)
 
-        # Вставляємо через Ctrl+V
+        # вставляємо
         pyautogui.hotkey("ctrl", "v")
 
-        # Відновлюємо старий буфер через секунду
+        # повертаємо старий буфер
         time.sleep(0.5)
         pyperclip.copy(old_clipboard)
 
         print(f"[info][dictation] Надруковано: {text}")
     except ImportError:
-        # Fallback на pyautogui якщо pyperclip не встановлено
+        # якщо pyperclip нема — друкуємо через pyautogui
         time.sleep(1.0)
         pyautogui.write(text, interval=0.05)
     except Exception as e:
@@ -561,19 +561,19 @@ def execute_cmd(cmd: str, raw_text: str) -> None:
         speak(f"Процесор {round(s['cpu'])}%, ОЗП {round(s['ram'])}%. {gpu}")
     elif cmd == "wakeup":
         speak("З поверненням, татку.")
-        track = r"E:\Programming\JARVIS_COMPONENTS\The_Clash_-_Should_I_Stay_or_Should_I_Go.mp3"
+        track = os.path.join(os.path.dirname(__file__), "extra", "The_Clash_-_Should_I_Stay_or_Should_I_Go_Remastered_(SkySound.cc).mp3")
         if os.path.exists(track):
             os.startfile(track)
 
     elif cmd.startswith("custom_"):
-        # Кастомна команда — відкрити програму
+        # запускаємо програму з кастомних команд
         idx = int(cmd.split("_")[1])
         cmds = load_custom_commands()
         if idx < len(cmds):
             execute_custom_cmd(cmds[idx]["path"], cmds[idx]["name"])
 
     elif cmd == "plugin":
-        # Витягуємо назву плагіну з фрази
+        # витягуємо назву плагіну
         plugin_name = raw_text
         for kw in ("впровади плагін","запусти плагін","завантаж плагін","активуй плагін"):
             plugin_name = plugin_name.replace(kw, "").strip()
@@ -587,7 +587,7 @@ def execute_cmd(cmd: str, raw_text: str) -> None:
             speak(f"Доступні плагіни: {available}, сер.")
 
     elif cmd == "screen":
-        # Визначаємо промпт залежно від контексту
+        # різні промпти залежно від того що сказали
         if "код" in raw_text or "помилк" in raw_text or "баг" in raw_text:
             prompt = "Подивись на цей код. Знайди помилки або проблеми. Відповідай коротко, 2-3 речення."
             speak("Сканую екран на помилки в коді, сер. Секунду.")
@@ -632,7 +632,7 @@ def execute_cmd(cmd: str, raw_text: str) -> None:
         speak("Скасовано, сер.")
 
     elif cmd == "plugin":
-        # Витягуємо назву плагіну з фрази
+        # витягуємо назву плагіну
         plugin_name = raw_text
         for kw in ("впровади плагін","запусти плагін","завантаж плагін","активуй плагін"):
             plugin_name = plugin_name.replace(kw, "").strip()
@@ -646,7 +646,7 @@ def execute_cmd(cmd: str, raw_text: str) -> None:
             speak(f"Доступні плагіни: {available}, сер.")
 
     elif cmd == "screen":
-        # Визначаємо промпт залежно від контексту
+        # різні промпти залежно від того що сказали
         if "код" in raw_text or "помилк" in raw_text or "баг" in raw_text:
             prompt = "Подивись на цей код. Знайди помилки або проблеми. Відповідай коротко, 2-3 речення."
             speak("Сканую екран на помилки в коді, сер. Секунду.")
@@ -677,7 +677,7 @@ def execute_cmd(cmd: str, raw_text: str) -> None:
 
     elif raw_text and any(raw_text.lower().startswith(kw) for kw in
                           ["напиши", "надрукуй", "друкуй", "пиши"]):
-        # Додатковий fallback — якщо fuzz не впіймав команду
+        # якщо fuzz не впіймав — ловимо тут
         text = parse_dictation(raw_text)
         if text:
             _dictation_pending = text
@@ -696,7 +696,7 @@ def execute_cmd(cmd: str, raw_text: str) -> None:
             speak("Скасовано, сер.")
 
     elif cmd == "unknown":
-        # Перевіряємо кастомні команди через нечітке порівняння
+        # перевіряємо кастомні команди
         custom_cmds = load_custom_commands()
         best_custom = {"idx": -1, "score": 0}
         for i, cc in enumerate(custom_cmds):
@@ -941,7 +941,7 @@ def build_ui(page: ft.Page) -> None:
     )
 
     # ── Навігація між екранами (замість ft.Tabs які не працюють в 0.84) ──────
-    # Два контейнери — показуємо один, ховаємо інший
+    # навігація між екранами через visible
     main_view = ft.Column(
         scroll=ft.ScrollMode.AUTO,
         spacing=8,
@@ -1021,7 +1021,7 @@ def build_ui(page: ft.Page) -> None:
             else:
                 reason = result.get("reason", "невідома причина")
                 log_queue.put(("__plugin_status__", f"❌ Відхилено: {reason}"))
-                # Озвучуємо тільки коротке повідомлення без технічних деталей
+                # не озвучуємо технічну помилку
                 if "503" in str(reason) or "UNAVAILABLE" in str(reason):
                     speak("Сер, AI зараз перевантажений. Спробуй ще раз за хвилину.")
                 elif "rate" in str(reason).lower() or "quota" in str(reason).lower():
@@ -1141,12 +1141,12 @@ def build_ui(page: ft.Page) -> None:
     def poller():
         while True:
             try:
-                # Собираем все накопившиеся сообщения за один проход
+                # беремо всі повідомлення з черги за раз
                 messages = []
                 while not log_queue.empty():
                     messages.append(log_queue.get_nowait())
                 
-                # Обрабатываем — важно сохранить порядок speaking/listening
+                # обробляємо по порядку
                 for role, text in messages:
                     if role == "__state__":
                         set_state(text)
@@ -1158,10 +1158,10 @@ def build_ui(page: ft.Page) -> None:
                         add_log(role, text)
             except Exception as e:
                 print(f"[error][poller] {e}")
-            time.sleep(0.05)  # 50мс вместо 100мс — быстрее реагирует
+            time.sleep(0.05)  # 50мс — швидше реагує
 
     threading.Thread(target=poller, daemon=True).start()
-    # Даём UI 1 секунду на инициализацию перед стартом голосового ядра
+    # чекаємо поки UI завантажиться
     threading.Timer(1.0, lambda: threading.Thread(target=_voice_core, daemon=True).start()).start()
 
 # ── Точка входа ────────────────────────────────────────────────────────────────
