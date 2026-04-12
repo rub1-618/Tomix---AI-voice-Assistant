@@ -2012,6 +2012,7 @@ def build_ui(page: ft.Page) -> None:
                     _ptick = 0
 
                 # ── audio visualizer (оновлення кожні 3 тіки = ~60мс) ──────
+                # needs_update завжди True щоб тримати Flutter renderer активним
                 if HAS_AUDIO_VIZ:
                     _viz_tick += 1
                     if _viz_tick >= 3:
@@ -2020,10 +2021,8 @@ def build_ui(page: ft.Page) -> None:
                             bands = audio_viz.get_frequency_bands(N_BARS)
                             for i, (bar, v) in enumerate(zip(_viz_bars, bands)):
                                 _bar_smooth[i] = _bar_smooth[i] * 0.5 + v * 0.5
-                                h = max(3, int(_bar_smooth[i] * _bar_max_h))
-                                if bar.height != h:
-                                    bar.height = h
-                                    needs_update = True
+                                bar.height = max(3, int(_bar_smooth[i] * _bar_max_h))
+                            needs_update = True  # завжди — інакше Flutter засипає
                         except Exception:
                             pass
 
