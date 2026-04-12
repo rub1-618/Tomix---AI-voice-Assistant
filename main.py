@@ -1074,7 +1074,6 @@ def build_ui(page: ft.Page) -> None:
             bgcolor="#3b82f6",
             border_radius=ft.BorderRadius(top_left=2, top_right=2,
                                           bottom_left=0, bottom_right=0),
-            animate=ft.Animation(90, ft.AnimationCurve.EASE_OUT),
         )
         for _ in range(N_BARS)
     ]
@@ -1104,7 +1103,7 @@ def build_ui(page: ft.Page) -> None:
             root.configure(bg="#1e1f22")
             root.withdraw()
 
-            _W, _H = 320, 110
+            _W, _H = 320, (148 if HAS_AUDIO_VIZ else 110)
 
             def _reposition(pos: str = "br") -> None:
                 sw = root.winfo_screenwidth()
@@ -1168,6 +1167,15 @@ def build_ui(page: ft.Page) -> None:
                                anchor="w", justify="left", wraplength=210)
             msg_lbl.pack(fill="x", padx=(8, 4))
 
+            # ── Equalizer canvas (tkinter — не залежить від Flutter) ─────────
+            if HAS_AUDIO_VIZ:
+                tk.Frame(info, height=1, bg="#2f3136").pack(fill="x", padx=8, pady=(5, 0))
+                _viz_cv = tk.Canvas(info, bg="#1e1f22", height=30,
+                                    bd=0, highlightthickness=0)
+                _viz_cv.pack(fill="x", padx=(8, 4), pady=(2, 4))
+            else:
+                _viz_cv = None
+
             def _tk_close(_e=None):
                 log_queue.put(("__overlay__", "hide"))
 
@@ -1212,6 +1220,23 @@ def build_ui(page: ft.Page) -> None:
                             )
                 except queue.Empty:
                     pass
+
+                # ── малюємо еквалайзер на canvas кожні 33мс ─────────────
+                if HAS_AUDIO_VIZ and _viz_cv is not None:
+                    try:
+                        bands = audio_viz.get_frequency_bands(16)
+                        _viz_cv.delete("all")
+                        bw, sp = 12, 3   # ширина бару, відступ
+                        for i, v in enumerate(bands):
+                            x0 = i * (bw + sp)
+                            h  = max(2, int(v * 26))
+                            _viz_cv.create_rectangle(
+                                x0, 28 - h, x0 + bw, 28,
+                                fill="#3b82f6", outline="",
+                            )
+                    except Exception:
+                        pass
+
                 root.after(33, _poll)
 
             _poll()
