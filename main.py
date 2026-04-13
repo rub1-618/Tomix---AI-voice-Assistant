@@ -510,6 +510,7 @@ def ask_ai(message: str) -> str:
             contents=context,
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_PROMPT,
+                tools = [types.Tool(google_search=types.GoogleSearch())],
                 max_output_tokens=1024,
                 temperature=0.85,
             ),
