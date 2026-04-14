@@ -14,6 +14,45 @@ Rust: The "muscles." I use Rust for high-performance system modules where memory
 > System Mastery: Controls windows, monitors hardware stats (CPU/RAM/GPU), and automates repetitive tasks.
 > Extensibility (The Best Part): The project is fully modular. Anyone can write their own Python methods and import them as plugins to customize JARVIS for their specific needs.
 
+ => Getting Started
+
+### Requirements
+- Windows 10/11
+- Python 3.10+
+- Rust toolchain ([rustup.rs](https://rustup.rs))
+- Google Gemini API key ([aistudio.google.com](https://aistudio.google.com))
+
+### Installation
+
+**1. Clone the repo**
+```bash
+git clone https://github.com/rub1-618/JARVIS---AI-voice-Assistant.git
+cd JARVIS---AI-voice-Assistant
+```
+
+**2. Install Python dependencies**
+```bash
+pip install -r requirements.txt
+```
+
+**3. Create `config.py` with your Gemini API key**
+```python
+GEMINI_KEY = "your_key_here"
+```
+
+**4. Compile Rust modules**
+```bash
+cd plugins_rust/media_ctrl && python -m maturin build --release --out ../../dist && cd ../..
+cd plugins_rust/jarvis_stats && python -m maturin build --release --out ../../dist && cd ../..
+cd plugins_rust/screen_catcher && python -m maturin build --release --out ../../dist && cd ../..
+pip install dist/media_ctrl-0.1.0-cp313-cp313-win_amd64.whl dist/jarvis_stats-0.1.0-cp313-cp313-win_amd64.whl dist/screen_catcher-0.1.0-cp313-cp313-win_amd64.whl --force-reinstall
+```
+
+**5. Run**
+```bash
+python main.py
+```
+
  => Roadmap
 Currently in Early Beta. Here is the plan:
 

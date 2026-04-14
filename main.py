@@ -695,7 +695,6 @@ OPTS = {
         "ctime":       ("поточний час","котра година","скільки часу","what time is it","current time","what's the time"),
         "stats":       ("статистика","стан системи","статус заліза","як там залізо","system stats","system status","how's the hardware"),
         "wakeup":      ("прокидайся татко повернувся","wake up daddy's home"),
-        "easter_egg":    ("пасхалка"),
         "window":      ("сховай все крім","згорни все крім","закрий вікно","розгорни вікно","закрий браузер","згорни все","hide everything except","minimize everything except","close window","restore window","minimize all"),
         "dictation":   ("напиши","надрукуй","друкуй","пиши","type","write","print"),
         "confirm_yes": ("так","вірно","підтверджую","yes","confirm","correct"),
@@ -741,11 +740,6 @@ def execute_cmd(cmd: str, raw_text: str) -> None:
         track = os.path.join(os.path.dirname(__file__), "extra", "The_Clash_-_Should_I_Stay_or_Should_I_Go_Remastered_(SkySound.cc).mp3")
         if os.path.exists(track):
             os.startfile(track)
-
-    elif cmd == "easter_egg":
-        meme = os.path.join(os.path.dirname(__file__), "extra", "image.png")
-        if os.path.exists(meme):
-            os.startfile(meme)
 
     elif cmd.startswith("custom_"):
         # запускаємо програму з кастомних команд
@@ -1675,6 +1669,7 @@ def build_ui(page: ft.Page) -> None:
             bgcolor=bg, color="#c0c8e0",
             border_color="#1e1e3a", focused_border_color=accent,
             label_style=ft.TextStyle(color=secondary),
+            on_blur=lambda _e: _save_custom_theme(),
         )
         _color_fields[key] = field
         return field
@@ -1779,6 +1774,7 @@ def build_ui(page: ft.Page) -> None:
 
     settings_view = ft.Column(
         scroll=ft.ScrollMode.AUTO,
+        height=760,
         spacing=10,
         visible=False,
         controls=[
@@ -1871,11 +1867,6 @@ def build_ui(page: ft.Page) -> None:
                 _mk_color_field("Другорядний", secondary, "secondary_f"),
             ], spacing=8),
             theme_status,
-            ft.FilledButton(
-                "Зберегти тему",
-                bgcolor=accent, color="#ffffff",
-                on_click=lambda e: _save_custom_theme(),
-            ),
             ft.Container(height=40),
         ],
     )
