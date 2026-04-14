@@ -1,5 +1,5 @@
- - JARVIS — My Personal AI Assistant
-Welcome! This is my pet project that I am actively developing. JARVIS isn't just another chatbot. It’s an ambitious attempt to bring the iconic AI assistant from the Marvel movies into real-life workflows.
+ - Tomix — My Personal AI Assistant
+Welcome! This is my pet project that I am actively developing. Tomix isn't just another chatbot. It’s an ambitious attempt to bring the iconic AI assistant from the Marvel movies into real-life workflows.
 "Everyone deserves an easier life!" - the slogan of the project.
 
 🛠 What’s under the hood?
@@ -9,10 +9,10 @@ Rust: The "muscles." I use Rust for high-performance system modules where memory
 
  * Key Features
 
-> Gemini Intelligence: Powered by Google's Gemini API, JARVIS understands complex context and maintains natural conversations.
-> Vision Capabilities: JARVIS can "see" your screen, analyze what's happening, and provide real-time assistance.
+> Gemini Intelligence: Powered by Google's Gemini API, Tomix understands complex context and maintains natural conversations.
+> Vision Capabilities: Tomix can "see" your screen, analyze what's happening, and provide real-time assistance.
 > System Mastery: Controls windows, monitors hardware stats (CPU/RAM/GPU), and automates repetitive tasks.
-> Extensibility (The Best Part): The project is fully modular. Anyone can write their own Python methods and import them as plugins to customize JARVIS for their specific needs.
+> Extensibility (The Best Part): The project is fully modular. Anyone can write their own Python methods and import them as plugins to customize Tomix for their specific needs.
 
  => Getting Started
 
@@ -26,8 +26,8 @@ Rust: The "muscles." I use Rust for high-performance system modules where memory
 
 **1. Clone the repo**
 ```bash
-git clone https://github.com/rub1-618/JARVIS---AI-voice-Assistant.git
-cd JARVIS---AI-voice-Assistant
+git clone https://github.com/rub1-618/Tomix---AI-voice-Assistant.git
+cd Tomix---AI-voice-Assistant
 ```
 
 **2. Install Python dependencies**

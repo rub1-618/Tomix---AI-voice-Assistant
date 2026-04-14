@@ -1,5 +1,5 @@
 """
-JARVIS — Voice AI Assistant
+Tomix — Voice AI Assistant
 Python 3.13.12, Flet 0.84, google-genai 1.x
 """
 
@@ -169,7 +169,7 @@ def speech_worker() -> None:
         speech_queue.task_done()
 
 def speak(text: str) -> None:
-    print(f"[Jarvis] {text}")
+    print(f"[Tomix] {text}")
     speech_queue.put(text)
 
 # ── Налаштування (settings) ───────────────────────────────────────────────────
@@ -228,7 +228,7 @@ def _ollama_available() -> bool:
         return False
 
 SYSTEM_PROMPT = """
-Ти — Джарвіс, ІІ-асистент з характером Джонні Сільверхенда з Cyberpunk 2077.
+Ти — Томікс, ІІ-асистент з характером Джонні Сільверхенда з Cyberpunk 2077.
 1. Відповідай коротко — 1-3 речення. Без води.
 2. Звертайся 'сер', але без раболіпства.
 3. Дерзи, бурчи на залізо, кидай цинічні жарти.
@@ -294,7 +294,7 @@ plugin_manager = PluginManager()
 
 def generate_plugin_code(description: str) -> str:
     """Генерує код плагіну за описом користувача через AI."""
-    prompt = f"""Напиши Python-плагін для голосового асистента JARVIS.
+    prompt = f"""Напиши Python-плагін для голосового асистента Tomix.
 
 Вимоги:
 - Один файл з функцією run(jarvis)
@@ -689,7 +689,7 @@ def type_text(text):
 
 # ── Команды ────────────────────────────────────────────────────────────────────
 OPTS = {
-    "alias": ("джарвіс","джей","джар","джай","jarvis","jay","jar"),
+    "alias": ("томікс","томі","том","tomix","tomi","tom"),
     "tbr":   ("скажи","розкажи","придумай","скільки","вимови","зроби","порахуй"),
     "cmds": {
         "ctime":       ("поточний час","котра година","скільки часу","what time is it","current time","what's the time"),
@@ -1033,7 +1033,8 @@ def _voice_core() -> None:
 
 # ── Flet UI ────────────────────────────────────────────────────────────────────
 def build_ui(page: ft.Page) -> None:
-    page.title = "JARVIS — AI Assistant"
+    page.title = "Tomix — AI Assistant"
+    page.window_icon = "logo.png"
     page.bgcolor = "#16171F"
     page.padding = 20
     page.window.width = 520
@@ -1063,7 +1064,7 @@ def build_ui(page: ft.Page) -> None:
         alignment=ft.Alignment(0, 0),
         animate=ft.Animation(400, ft.AnimationCurve.EASE_IN_OUT),
         left=60, top=60,
-        content=ft.Text("J", size=48, weight=ft.FontWeight.BOLD,
+        content=ft.Text("T", size=48, weight=ft.FontWeight.BOLD,
                         color=accent, text_align=ft.TextAlign.CENTER),
     )
     pulse_stack = ft.Stack(
@@ -1135,7 +1136,7 @@ def build_ui(page: ft.Page) -> None:
             # header row: "JARVIS"  [● STATE]
             hdr = tk.Frame(info, bg="#1e1f22")
             hdr.pack(fill="x", padx=(8, 6), pady=(9, 2))
-            tk.Label(hdr, text="JARVIS", font=("Segoe UI", 10, "bold"),
+            tk.Label(hdr, text="TOMIX", font=("Segoe UI", 10, "bold"),
                      fg="#ffffff", bg="#1e1f22").pack(side="left")
             st_frame = tk.Frame(hdr, bg="#1e1f22")
             st_frame.pack(side="right")
@@ -1232,7 +1233,7 @@ def build_ui(page: ft.Page) -> None:
         log_column.controls.append(
             ft.Container(
                 content=ft.Text(
-                    ("Ви: " if is_user else "Jarvis: ") + text,
+                    ("Ви: " if is_user else "Tomix: ") + text,
                     color="#c0c8e0" if is_user else accent,
                     size=12, selectable=True,
                 ),
@@ -1627,7 +1628,7 @@ def build_ui(page: ft.Page) -> None:
                     ft.Row([
                         ft.Row([
                             ft.Container(width=6, height=6, border_radius=3, bgcolor=accent),
-                            ft.Text("JARVIS", color="#ffffff", size=11, weight=ft.FontWeight.W_700),
+                            ft.Text("TOMIX", color="#ffffff", size=11, weight=ft.FontWeight.W_700),
                         ], spacing=5),
                         ft.Row([
                             _ovl_status_dot,
@@ -1872,7 +1873,7 @@ def build_ui(page: ft.Page) -> None:
     )
 
     # ── Навігація ──────────────────────────────────────────────────────────────
-    btn_main = ft.TextButton("JARVIS", style=ft.ButtonStyle(color=accent))
+    btn_main = ft.TextButton("TOMIX", style=ft.ButtonStyle(color=accent))
     btn_cmds = ft.TextButton("КОМАНДИ", style=ft.ButtonStyle(color=secondary))
     btn_lab = ft.TextButton("PLUGIN LAB", style=ft.ButtonStyle(color=secondary))
     btn_settings = ft.TextButton("⚙", style=ft.ButtonStyle(color=secondary))
@@ -1940,7 +1941,7 @@ def build_ui(page: ft.Page) -> None:
         controls=[
             ft.Row([
                 ft.Row([
-                    ft.Text("JARVIS", size=24, weight=ft.FontWeight.BOLD, color=accent),
+                    ft.Text("TOMIX", size=24, weight=ft.FontWeight.BOLD, color=accent),
                     ft.Text("AI Voice Assistant", size=11, color=secondary),
                 ]),
                 ft.Row([ai_mode_btn, btn_settings], spacing=8),
@@ -2054,4 +2055,4 @@ def build_ui(page: ft.Page) -> None:
 # ── Точка входа ────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     threading.Thread(target=speech_worker, daemon=True).start()
-    ft.app(target=build_ui, view=ft.AppView.FLET_APP)
+    ft.app(target=build_ui, view=ft.AppView.FLET_APP, assets_dir="extra")
