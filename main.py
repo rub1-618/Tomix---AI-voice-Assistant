@@ -32,7 +32,10 @@ from google import genai
 from google.genai import types
 import flet as ft
 
-from config import GEMINI_KEY as _DEFAULT_GEMINI_KEY
+try:
+    from config import GEMINI_KEY as _DEFAULT_GEMINI_KEY
+except ImportError:
+    _DEFAULT_GEMINI_KEY = ""
 
 try:
     import GPUtil
@@ -220,6 +223,8 @@ _init_theme()
 def _init_ai_client(api_key: str = None) -> None:
     global _ai_client, _ai_model
     key = api_key or load_settings().get("gemini_key") or _DEFAULT_GEMINI_KEY
+    if not key:
+        return
     _ai_client = genai.Client(api_key=key)
     _ai_model = ""
 
@@ -1175,24 +1180,25 @@ def _speech_callback(recognizer, audio) -> None:
 # ── Голосовое ядро ─────────────────────────────────────────────────────────────
 def _voice_core() -> None:
     global _ai_model
-    try:
-        _ai_model = get_best_model()
-        recognizer = sr.Recognizer()
-        recognizer.dynamic_energy_threshold = True
-        mic = sr.Microphone()
-        log_queue.put(("__state__", "calibrating"))
-        with mic as source:
-            print("[info] Калібрування мікрофону...")
-            recognizer.adjust_for_ambient_noise(source, duration=1.5)
-        speak("Система онлайн. Томікс на зв'язку, сер.")
-        recognizer.listen_in_background(mic, _speech_callback, phrase_time_limit=8)
-        log_queue.put(("__state__", "listening"))
-        print("[info] Слухаю.")
-        while True:
-            time.sleep(1)
-    except Exception as e:
-        print(f"[error][voice_core] {e}")
-        traceback.print_exc()
+    while True:
+        try:
+            _ai_model = get_best_model()
+            recognizer = sr.Recognizer()
+            recognizer.dynamic_energy_threshold = True
+            mic = sr.Microphone()
+            log_queue.put(("__state__", "calibrating"))
+            with mic as source:
+                print("[info] Калібрування мікрофону...")
+                recognizer.adjust_for_ambient_noise(source, duration=1.5)
+            speak("Система онлайн. Томікс на зв'язку, сер.")
+            recognizer.listen_in_background(mic, _speech_callback, phrase_time_limit=8)
+            log_queue.put(("__state__", "listening"))
+            print("[info] Слухаю.")
+            while True:
+                time.sleep(1)
+        except Exception as e:
+            print(f"[error][voice_core] {e}, повтор через 3с...")
+            time.sleep(3)
 
 # ── Flet UI ────────────────────────────────────────────────────────────────────
 def build_ui(page: ft.Page) -> None:
@@ -1894,6 +1900,7 @@ def build_ui(page: ft.Page) -> None:
         label_style=ft.TextStyle(color=secondary),
     )
     settings_status = ft.Text("", color="#00ff88", size=12)
+    gemini_status = ft.Text("", color="#00ff88", size=12)
 
     def save_ollama_model(e):
         global OLLAMA_MODEL
@@ -1922,22 +1929,22 @@ def build_ui(page: ft.Page) -> None:
     def save_api_key(e):
         key = api_key_field.value.strip()
         if not key:
-            settings_status.value = "⚠ Введи API ключ"
-            settings_status.color = accent
+            gemini_status.value = "⚠ Введи API ключ"
+            gemini_status.color = accent
             page.update()
             return
         save_settings({"gemini_key": key})
         _init_ai_client(key)
-        settings_status.value = "✅ Gemini ключ збережено."
-        settings_status.color = "#00ff88"
+        gemini_status.value = "✅ Gemini ключ збережено."
+        gemini_status.color = "#00ff88"
         page.update()
 
     def clear_api_key(e):
         save_settings({"gemini_key": ""})
         api_key_field.value = ""
         _init_ai_client()
-        settings_status.value = "↩ Використовується ключ з config.py"
-        settings_status.color = secondary
+        gemini_status.value = "↩ Використовується ключ з config.py"
+        gemini_status.color = secondary
         page.update()
 
     settings_view = ft.Column(
@@ -1988,6 +1995,7 @@ def build_ui(page: ft.Page) -> None:
                     on_click=clear_api_key,
                 ),
             ], spacing=10),
+            gemini_status,
             # ── Швидкість мовлення ────────────────────────────────────────────
             ft.Divider(color="#1e1e3a", height=20),
             ft.Text("ШВИДКІСТЬ МОВЛЕННЯ", color=secondary, size=11),
@@ -2216,6 +2224,12 @@ def build_ui(page: ft.Page) -> None:
     # чекаємо поки UI завантажиться, потім стартуємо аудіо + голос
     def _start_all():
         threading.Thread(target=_voice_core, daemon=True).start()
+        has_key = load_settings().get("gemini_key", "") or _DEFAULT_GEMINI_KEY
+        if not has_key:
+            switch_to_settings(None)
+            gemini_status.value = "⚠ Введи Gemini API ключ для роботи асистента"
+            gemini_status.color = "#ff6b6b"
+            page.update()
 
     threading.Timer(1.0, _start_all).start()
 

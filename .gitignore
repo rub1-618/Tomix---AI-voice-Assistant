@@ -21,3 +21,11 @@ config.py
 
 # Рабочие данные (история диалогов, настройки)
 memory/
+
+# Сборка
+build/
+dist/
+dist_wheels/
+*.spec.bak
+generated-*.ico
+venv/
