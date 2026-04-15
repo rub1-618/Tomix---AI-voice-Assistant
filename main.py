@@ -64,6 +64,13 @@ except ImportError:
     HAS_MEDIA_CTRL = False
     print("[info] Media Ctrl не знайдено")
 
+try:
+    import file_ops
+    HAS_FILE_OPS = True
+    print("[info] File Ops завантажено")
+except ImportError:
+    HAS_FILE_OPS = False
+    print("[info] File Ops не знайдено")
 
 
 # ── Глобальные переменные ──────────────────────────────────────────────────────
@@ -99,6 +106,7 @@ def split_by_language(text: str) -> list:
 
 # ── TTS ────────────────────────────────────────────────────────────────────────
 def _say_text(text: str, voice_idx: int) -> None:
+    global _tts_proc
     """
     Озвучка через PowerShell + SAPI5.
     Полностью обходит конфликт pyttsx3 с Flet event loop.
@@ -126,11 +134,14 @@ def _say_text(text: str, voice_idx: int) -> None:
         )
 
         import subprocess
-        subprocess.run(
+        _tts_proc = subprocess.Popen(
             ["powershell", "-NoProfile", "-Command", ps_script],
-            capture_output=True,
-            timeout=30,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
+        _tts_proc.wait()
+
+
     except Exception as e:
         print(f"[error][TTS] {e}")
 
@@ -635,6 +646,10 @@ def window_action(query):
 _dictation_pending: str = ""
 _plugin_create_pending: bool = False  # чекаємо опис нового плагіну від користувача
 _last_plugin: dict = {}               # {"name": str, "code": str} — для відкату
+_file_cmd_pending: str = ""
+_file_write_from: str = ""
+_file_append_from: str = ""
+_file_rename_from: str = ""
 
 def parse_dictation(query):
     """
@@ -692,6 +707,7 @@ OPTS = {
     "alias": ("томікс","томі","том","tomix","tomi","tom"),
     "tbr":   ("скажи","розкажи","придумай","скільки","вимови","зроби","порахуй"),
     "cmds": {
+        "stop":        ("стоп","прекрати","зупинись","хватит","stop","enough","halt", "завали глотку", "завали єбало"),
         "ctime":       ("поточний час","котра година","скільки часу","what time is it","current time","what's the time"),
         "stats":       ("статистика","стан системи","статус заліза","як там залізо","system stats","system status","how's the hardware"),
         "wakeup":      ("прокидайся татко повернувся","wake up daddy's home"),
@@ -708,9 +724,18 @@ OPTS = {
         "overlay":     ("оверлей","покажи оверлей","відкрий оверлей","запусти оверлей","overlay","show overlay","open overlay"),
         "overlay_hide":("сховай оверлей","закрий оверлей","прибери оверлей","вимкни оверлей","hide overlay","close overlay","disable overlay"),
         "overlay_move":("оверлей в","перемісти оверлей","оверлей куток","оверлей кут","move overlay","overlay to","overlay corner"),
+        "music_title": ("що зараз грає","назва пісні","яка пісня","who's playing","what's the song","song title"),
         "music_toggle_play_pause":("продовжуй музику","зупини музику","пауза музика","віднови музику","постав на паузу","pause music","play music","resume music","stop music","toggle music"),
         "music_next":("некст трек","наступна пісня","пропусти пісню","ще пісню","некст","давай некст","next track","next song","skip song","next"),
         "music_prev":("давай ще раз","попередня пісня","минулий трек","ще раз","previous song","previous track","go back"),
+        "music_info":("що грає","що зараз грає","що за пісня","яка пісня","яка пісня грає","назва треку","хто співає","what's playing","what song is this","current track","who sings"),
+        "file_read":   ("прочитай файл","читай файл","відкрий файл","покажи файл","read file","open file","show file"),
+        "file_write":  ("запиши у файл","створи файл","новий файл","напиши файл","write file","create file","new file"),
+        "file_append": ("дозапиши у файл","додай до файлу","append to file","add to file"),
+        "file_list":   ("список файлів","що в папці","покажи папку","list files","show folder","what's in folder"),
+        "file_delete": ("видали файл","стерти файл","delete file","remove file"),
+        "file_rename": ("перейменуй файл","rename file"),
+
     },
 }
 
@@ -725,12 +750,26 @@ def recognize_cmd(command):
                 RC['percent'] = vrt
     return RC
 
+def stop_speaking():
+    global _tts_proc
+    if _tts_proc:
+        _tts_proc.kill()
+        _tts_proc = None
+    with speech_queue.mutex:
+        speech_queue.queue.clear()
+
 
 def execute_cmd(cmd: str, raw_text: str) -> None:
-    global _dictation_pending, _plugin_create_pending, _last_plugin, AI_MODE
+    global _dictation_pending, _plugin_create_pending, _last_plugin, AI_MODE, _file_cmd_pending, _file_write_from, _file_append_from, _file_rename_from
+
     if cmd == "ctime":
         now = datetime.datetime.now()
         speak(f"Зараз {now.hour}:{now.minute:02d}, сер.")
+ 
+    elif cmd == "stop":
+        stop_speaking()
+        speak("Зрозумів, сер.")
+
     elif cmd == "stats":
         s = get_system_stats()
         gpu = f"Відеокарта {round(s['gpu_temp'])}C." if s["gpu_temp"] else "Відеокарту не знайдено."
@@ -922,6 +961,18 @@ def execute_cmd(cmd: str, raw_text: str) -> None:
         log_queue.put(("__overlay__", f"pos:{pos}"))
         speak("Переміщую, сер.")
 
+    elif cmd == "music_info":
+        try:
+            info = media_ctrl.get_media_info()
+            title = info.get("title", "")
+            artist = info.get("artist", "")
+            if title:
+                speak(f"Зараз грає {title}{', ' + artist if artist else ''}, сер.")
+            else:
+                speak("Нічого не грає, сер.")
+        except Exception:
+            speak("Не вдалося отримати інфо про трек, сер.")
+
     elif cmd == "music_toggle_play_pause":
         media_ctrl.toggle_play_pause()
 
@@ -931,13 +982,116 @@ def execute_cmd(cmd: str, raw_text: str) -> None:
     elif cmd == "music_prev":
         media_ctrl.prev_track()
 
+    elif cmd == "file_read":
+        _file_cmd_pending = "read"
+        speak("Назвіть ім'я файлу, сер.")
+
+    elif cmd == "file_write":
+        _file_cmd_pending = "write"
+        speak("Назвіть ім'я файлу, сер.")
+
+    elif cmd == "file_append":
+        _file_cmd_pending = "append"
+        speak("Назвіть ім'я файлу, сер.")
+
+    elif cmd == "file_list":
+        _file_cmd_pending = "list"
+        speak("Назвіть ім'я файлу, сер.")
+
+    elif cmd == "file_exists":
+        _file_cmd_pending = "exists"
+        speak("Назвіть ім'я файлу, сер.")
+
+    elif cmd == "file_delete":
+        _file_cmd_pending = "delete"
+        speak("Назвіть ім'я файлу, сер.")
+
+    elif cmd == "file_rename":
+        _file_cmd_pending = "rename"
+        speak("Назвіть ім'я файлу, сер.")
+
     elif cmd == "unknown":
+
         # ── якщо чекаємо опис плагіну ─────────────────────────────────────
         if _plugin_create_pending and raw_text.strip():
             _plugin_create_pending = False
             description = raw_text.strip()
             speak("Генерую плагін, сер. Хвилинку.")
 
+        if _file_cmd_pending:
+            filename = raw_text.strip()
+            if _file_cmd_pending in ("write", "append"):
+                path = None
+            elif _file_cmd_pending == "rename" and not _file_rename_from:
+                path = None
+            else:
+                path = file_ops.find_file(filename, os.path.expanduser("~"))
+            if not path and _file_cmd_pending not in ("write", "append"):
+                speak("Файл не знайдено, сер.")
+
+            elif _file_cmd_pending == "read":
+                content = file_ops.read_file(path)
+                ask_ai(f"Ось вміст файлу, сер:\n{content}")
+
+            elif _file_cmd_pending == "write":
+                if not _file_write_from:
+                    # первый шаг — запомнили имя файла
+                    _file_write_from = raw_text.strip()
+                    speak("Що записати, сер?")
+                    return  # не сбрасываем _file_cmd_pending
+                else:
+                    # второй шаг — новое имя пришло
+                    path = os.path.expanduser(f"~/{_file_write_from}")
+                    file_ops.write_file(path, raw_text.strip())
+                    speak("Записано, сер.")
+                    _file_write_from = None
+                    _file_cmd_pending = None
+
+            elif _file_cmd_pending == "append":
+                if not _file_append_from:
+                    # первый шаг — запомнили имя файла
+                    _file_append_from = raw_text.strip()
+                    speak("Що дозаписати, сер?")
+                    return  # не сбрасываем _file_cmd_pending
+                else:
+                    # второй шаг — новое имя пришло
+                    path = file_ops.find_file(_file_append_from, os.path.expanduser("~"))
+                    if not path:
+                        speak("Файл не знайдено, сер.")
+                    else:
+                        file_ops.append_file(path, raw_text.strip())
+                        speak("Записано, сер.")
+                    _file_append_from = None
+                    _file_cmd_pending = None
+
+            elif _file_cmd_pending == "list":
+                folder = os.path.expanduser(f"~/{filename}")
+                content = file_ops.list_files(folder)
+                speak(f"У папці {filename} є такі файли: {', '.join(content)}, сер.")
+
+            elif _file_cmd_pending == "delete":
+                file_ops.delete_file(path)
+                speak("Файл видалено, сер.")
+
+            elif _file_cmd_pending == "rename":
+                if not _file_rename_from:
+                    # первый шаг — запомнили имя файла
+                    _file_rename_from = raw_text.strip()
+                    speak("Яка нова назва, сер?")
+                    return  # не сбрасываем _file_cmd_pending
+                else:
+                    # второй шаг — новое имя пришло
+                    path = file_ops.find_file(_file_rename_from, os.path.expanduser("~"))
+                    if not path:
+                        speak("Файл не знайдено, сер.")
+                    else:
+                        file_ops.rename_file(path, raw_text.strip())
+                    speak("Перейменовано, сер.")
+                    _file_rename_from = None
+        
+            _file_cmd_pending = None
+
+        
             def _create_plugin():
                 code = generate_plugin_code(description)
                 if not code:
@@ -978,14 +1132,23 @@ def execute_cmd(cmd: str, raw_text: str) -> None:
         elif raw_text.strip():
             speak(ask_ai(raw_text))
 
+
 # ── Распознавание речи ─────────────────────────────────────────────────────────
 def _speech_callback(recognizer, audio) -> None:
     if is_speaking:
+        try:
+            voice = recognizer.recognize_google(audio, language="uk-UA").lower()
+            stop_words = ("стоп", "прекрати", "зупинись", "хватит", "stop", "enough", "halt")
+            if any(fuzz.ratio(w, voice) > 70 or w in voice for w in stop_words):
+                stop_speaking()
+        except:
+            pass
         return
     try:
         voice = recognizer.recognize_google(audio, language="uk-UA").lower()
         print(f"[log] Почув: {voice}")
-        if not any(voice.startswith(a) for a in OPTS["alias"]):
+        first_word = voice.split()[0] if voice.split() else ""
+        if not any(fuzz.ratio(first_word, a) > 60 for a in OPTS["alias"]):
             # якщо чекаємо опис плагіну — приймаємо без алiасу
             if _plugin_create_pending:
                 execute_cmd("unknown", voice)
@@ -1040,6 +1203,10 @@ def build_ui(page: ft.Page) -> None:
     page.window.width = 520
     page.window.height = 900
     page.window.resizable = True
+    def on_key(e: ft.KeyboardEvent):
+        if e.key == " " and e.ctrl:
+          stop_speaking()
+    page.on_keyboard_event = on_key
 
     # ── Кольори теми ──────────────────────────────────────────────────────────
     accent    = THEME["accent"]
@@ -2055,4 +2222,6 @@ def build_ui(page: ft.Page) -> None:
 # ── Точка входа ────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     threading.Thread(target=speech_worker, daemon=True).start()
+    import keyboard
+    keyboard.add_hotkey("ctrl+space", stop_speaking)
     ft.app(target=build_ui, view=ft.AppView.FLET_APP, assets_dir="extra")
