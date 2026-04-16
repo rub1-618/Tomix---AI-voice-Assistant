@@ -85,7 +85,7 @@ tts_volume: float = 1.0
 
 # індекси голосів (дізнався через enumerate(voices))
 VOICE_RU = 4  # Anton (RHVoice)
-VOICE_EN = 1  # Microsoft David Desktop
+VOICE_EN = 2# Microsoft David Desktop
 
 # ── Языковые утилиты ───────────────────────────────────────────────────────────
 def split_by_language(text: str) -> list:
