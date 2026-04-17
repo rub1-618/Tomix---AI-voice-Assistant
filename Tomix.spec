@@ -1,46 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_all
 
-datas = [
-    ('extra', 'extra'),
-    ('plugins', 'plugins'),
-]
-binaries = []
-hiddenimports = []
-
-# Rust extension modules (.pyd) — PyInstaller не находит их автоматически
-for pkg in ['jarvis_stats', 'screen_catcher', 'audio_viz', 'media_ctrl', 'file_ops']:
-    tmp = collect_all(pkg)
-    datas    += tmp[0]
-    binaries += tmp[1]
-    hiddenimports += tmp[2]
 
 a = Analysis(
     ['main.py'],
     pathex=[],
-    binaries=binaries,
-    datas=datas,
-    hiddenimports=hiddenimports + [
-        'jarvis_stats',
-        'screen_catcher',
-        'audio_viz',
-        'media_ctrl',
-        'file_ops',
-        'fuzzywuzzy',
-        'Levenshtein',
-        'certifi',
-        'speech_recognition',
-        'pyaudio',
-        'pyttsx3',
-        'pyttsx3.drivers',
-        'pyttsx3.drivers.sapi5',
-        'pygetwindow',
-        'pyautogui',
-        'keyboard',
-        'google.genai',
-        'ollama',
-        'psutil',
-    ],
+    binaries=[],
+    datas=[('extra', 'extra'), ('plugins', 'plugins')],
+    hiddenimports=[],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -69,5 +35,6 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    version='C:\\Users\\vsevo\\AppData\\Local\\Temp\\207ec5ea-fbad-4384-8469-9747047d6388',
     icon=['extra\\icon.png'],
 )

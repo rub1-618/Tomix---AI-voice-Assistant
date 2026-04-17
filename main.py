@@ -27,7 +27,13 @@ import pygetwindow as gw
 import pyautogui
 import pyttsx3
 import psutil
-from fuzzywuzzy import fuzz
+try:
+    from rapidfuzz import fuzz, process as rfprocess
+    _HAS_RAPIDFUZZ = True
+except ImportError:
+    from fuzzywuzzy import fuzz
+    rfprocess = None
+    _HAS_RAPIDFUZZ = False
 from google import genai
 from google.genai import types
 import flet as ft
@@ -83,6 +89,34 @@ log_queue: queue.Queue = queue.Queue()
 tts_rate: int = 220
 tts_volume: float = 1.0
 
+# ── Кэши (заполняются при старте, не пересчитываются) ─────────────────────────
+_VOICE_NAMES: list[str] = []          # голоса SAPI5, кэш из pyttsx3 при старте
+_ollama_cache: dict = {"ok": None, "ts": 0.0}   # кэш доступности Ollama (30с)
+_history_mem: list = []               # история в памяти (не читать JSON каждый раз)
+_history_dirty: bool = False          # флаг "нужно записать на диск"
+
+# ── Стриппер Markdown перед TTS ───────────────────────────────────────────────
+_RE_MD_BOLD    = re.compile(r'\*{1,3}([^*]+)\*{1,3}')
+_RE_MD_HEADER  = re.compile(r'^#{1,6}\s+', re.MULTILINE)
+_RE_MD_BULLET  = re.compile(r'^\s*[-*+]\s+', re.MULTILINE)
+_RE_MD_LINK    = re.compile(r'\[([^\]]+)\]\([^)]+\)')
+_RE_MD_CODE    = re.compile(r'`{1,3}[^`]*`{1,3}')
+_RE_MD_UNDER   = re.compile(r'_{1,2}([^_]+)_{1,2}')
+
+def _strip_markdown(text: str) -> str:
+    text = _RE_MD_CODE.sub('', text)
+    text = _RE_MD_BOLD.sub(r'\1', text)
+    text = _RE_MD_UNDER.sub(r'\1', text)
+    text = _RE_MD_LINK.sub(r'\1', text)
+    text = _RE_MD_HEADER.sub('', text)
+    text = _RE_MD_BULLET.sub('', text)
+    text = re.sub(r'\n{2,}', '. ', text)
+    text = re.sub(r'\n', ' ', text)
+    return text.strip()
+
+# ── Розбивка на речення для стримінгового TTS ─────────────────────────────────
+_RE_SENTENCE = re.compile(r'(?<=[.!?…])\s+')
+
 # індекси голосів (дізнався через enumerate(voices))
 VOICE_RU = 4  # Anton (RHVoice)
 VOICE_EN = 2# Microsoft David Desktop
@@ -116,21 +150,23 @@ def _say_text(text: str, voice_idx: int) -> None:
     Каждый вызов — отдельный процесс PowerShell, который говорит и завершается.
     """
     try:
-        # прибираємо лапки щоб не зламати PowerShell
-        safe_text = text.replace("'", " ").replace('"', ' ')
+        # прибираємо лапки + markdown щоб не зламати PowerShell
+        clean = _strip_markdown(text)
+        safe_text = clean.replace("'", " ").replace('"', ' ').replace(';', ',')
 
-        # беремо ім'я голосу за індексом
-        import pyttsx3 as _pyttsx3
-        _e = _pyttsx3.init("sapi5")
-        _voices = _e.getProperty("voices")
-        _e.stop()
-        voice_name = _voices[voice_idx].name if voice_idx < len(_voices) else _voices[0].name
+        # голос з кешу (без pyttsx3.init на кожен виклик)
+        if _VOICE_NAMES and voice_idx < len(_VOICE_NAMES):
+            voice_name = _VOICE_NAMES[voice_idx]
+        elif _VOICE_NAMES:
+            voice_name = _VOICE_NAMES[0]
+        else:
+            voice_name = ""
 
-        # запускаємо PowerShell і озвучуємо
+        select_voice = f"$s.SelectVoice('{voice_name}'); " if voice_name else ""
         ps_script = (
             f"Add-Type -AssemblyName System.Speech; "
             f"$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
-            f"$s.SelectVoice('{voice_name}'); "
+            f"{select_voice}"
             f"$s.Rate = {int((tts_rate - 190) / 10)}; "
             f"$s.Volume = {int(tts_volume * 100)}; "
             f"$s.Speak('{safe_text}');"
@@ -138,12 +174,12 @@ def _say_text(text: str, voice_idx: int) -> None:
 
         import subprocess
         _tts_proc = subprocess.Popen(
-            ["powershell", "-NoProfile", "-Command", ps_script],
+            ["powershell", "-NonInteractive", "-NoProfile", "-NoLogo", "-Command", ps_script],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW,
         )
         _tts_proc.wait()
-
 
     except Exception as e:
         print(f"[error][TTS] {e}")
@@ -152,16 +188,17 @@ def _say_text(text: str, voice_idx: int) -> None:
 def speech_worker() -> None:
     global is_speaking
 
-    # виводимо список голосів при старті
+    # виводимо список голосів при старті + кешуємо імена
     try:
         import pyttsx3 as _pyttsx3
         _e = _pyttsx3.init("sapi5")
         voices = _e.getProperty("voices")
+        _VOICE_NAMES[:] = [v.name for v in voices]
+        _e.stop()
         print(f"[info] Доступно голосів: {len(voices)}")
         for i, v in enumerate(voices):
             print(f"  [{i}] {v.name}")
-        _e.stop()
-        print("[info] TTS готовий (PowerShell режим)")
+        print("[info] TTS готовий (PowerShell режим, голоси кешовані)")
     except Exception as e:
         print(f"[error][TTS init] {e}")
         return
@@ -236,11 +273,16 @@ OLLAMA_MODEL: str = load_settings().get("ollama_model", "gemma4")
 AI_MODE: str = load_settings().get("ai_mode", "ollama")  # "ollama" або "gemini"
 
 def _ollama_available() -> bool:
+    now = time.time()
+    if _ollama_cache["ok"] is not None and now - _ollama_cache["ts"] < 30:
+        return _ollama_cache["ok"]
     try:
         import ollama as _ol
         _ol.list()
+        _ollama_cache.update({"ok": True, "ts": now})
         return True
     except Exception:
+        _ollama_cache.update({"ok": False, "ts": now})
         return False
 
 SYSTEM_PROMPT = """
@@ -423,32 +465,37 @@ MAX_HISTORY = 100   # максимум записей в файле
 CONTEXT_SIZE = 10   # сколько последних диалогов передаём в Gemini
 
 def load_history() -> list:
-    """Загрузить историю диалогов с диска."""
+    """Повертає кешовану в пам'яті історію (читає файл тільки один раз)."""
+    global _history_mem
+    if _history_mem:
+        return _history_mem
     try:
         if MEMORY_FILE.exists():
             with open(MEMORY_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
+                _history_mem = json.load(f)
     except Exception as e:
         print(f"[error][memory] load: {e}")
-    return []
+        _history_mem = []
+    return _history_mem
 
 def save_to_history(user_text: str, jarvis_text: str) -> None:
-    """Сохранить диалог в файл на диске."""
-    try:
-        history = load_history()
-        history.append({
-            "time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
-            "user": user_text,
-            "jarvis": jarvis_text,
-        })
-        # зберігаємо тільки останні 100
-        history = history[-MAX_HISTORY:]
-        MEMORY_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(MEMORY_FILE, "w", encoding="utf-8") as f:
-            json.dump(history, f, ensure_ascii=False, indent=2)
-        print(f"[memory] Збережено діалогів: {len(history)}")
-    except Exception as e:
-        print(f"[error][memory] save: {e}")
+    """Зберегти в пам'ять і асинхронно записати на диск."""
+    _history_mem.append({
+        "time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "user": user_text,
+        "jarvis": jarvis_text,
+    })
+    if len(_history_mem) > MAX_HISTORY:
+        del _history_mem[:-MAX_HISTORY]
+
+    def _flush():
+        try:
+            MEMORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with open(MEMORY_FILE, "w", encoding="utf-8") as f:
+                json.dump(_history_mem, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"[error][memory] save: {e}")
+    threading.Thread(target=_flush, daemon=True).start()
 
 def load_custom_commands() -> list:
     """Завантажити користувацькі команди з файлу."""
@@ -500,23 +547,52 @@ def build_gemini_context(new_message: str) -> list:
     messages.append(types.Content(role="user", parts=[types.Part(text=new_message)]))
     return messages
 
-def ask_ai(message: str) -> str:
+def _split_sentences(text: str) -> list[str]:
+    """Розбиває текст на речення по [.!?…] для стримінгового TTS."""
+    parts = _RE_SENTENCE.split(text.strip())
+    return [p.strip() for p in parts if p.strip()]
+
+def ask_ai_stream(message: str):
+    """
+    Генератор: віддає речення по одному в міру генерації відповіді.
+    Перше речення з'являється одразу — не чекаємо кінця всієї відповіді.
+    """
     global _ai_model
-    # — Ollama (primary) ———————————————————————————
+    log_queue.put(("__state__", "thinking"))
+
+    # — Ollama streaming ———————————————————————————
     if AI_MODE == "ollama" and _ollama_available():
         try:
             import ollama as _ol
-            resp = _ol.chat(
+            buf = ""
+            full = ""
+            stream = _ol.chat(
                 model=OLLAMA_MODEL,
                 messages=build_ollama_messages(message),
+                stream=True,
                 options={"temperature": 0.85, "num_predict": 1024},
             )
-            answer = resp["message"]["content"].strip()
-            save_to_history(message, answer)
-            return answer
+            for chunk in stream:
+                token = chunk["message"]["content"]
+                buf += token
+                full += token
+                # віддаємо завершені речення
+                while True:
+                    m = _RE_SENTENCE.search(buf)
+                    if not m:
+                        break
+                    sentence = buf[:m.start() + len(m.group())].strip()
+                    buf = buf[m.start() + len(m.group()):]
+                    if sentence:
+                        yield sentence
+            if buf.strip():
+                yield buf.strip()
+            save_to_history(message, full.strip())
+            return
         except Exception as e:
-            print(f"[warn][ollama] {e} — falling back to Gemini")
-    # — Gemini (fallback) ——————————————————————————
+            print(f"[warn][ollama stream] {e} — falling back to Gemini")
+
+    # — Gemini (fallback, не підтримує stream з tools, читаємо одразу) ─────────
     if not _ai_model:
         _ai_model = get_best_model()
     try:
@@ -526,17 +602,23 @@ def ask_ai(message: str) -> str:
             contents=context,
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_PROMPT,
-                tools = [types.Tool(google_search=types.GoogleSearch())],
+                tools=[types.Tool(google_search=types.GoogleSearch())],
                 max_output_tokens=1024,
                 temperature=0.85,
             ),
         )
         answer = response.text.strip()
         save_to_history(message, answer)
-        return answer
+        for sentence in _split_sentences(answer):
+            yield sentence
     except Exception as e:
         print(f"[error][AI] {e}")
-        return "Сер, сталося щось не так."
+        log_queue.put(("__state__", "listening"))
+        yield "Сер, сталося щось не так."
+
+def ask_ai(message: str) -> str:
+    """Зворотна сумісність: збирає всі речення і повертає рядком."""
+    return " ".join(ask_ai_stream(message))
 
 # ── Статистика ─────────────────────────────────────────────────────────────────
 def get_system_stats() -> dict:
@@ -709,51 +791,292 @@ def type_text(text):
 
 # ── Команды ────────────────────────────────────────────────────────────────────
 OPTS = {
-    "alias": ("томікс","томі","том","tomix","tomi","tom"),
-    "tbr":   ("скажи","розкажи","придумай","скільки","вимови","зроби","порахуй"),
+    "alias": ("томікс","томі","том","tomix","tomi","tom","томікс","томіксе"),
+    "tbr":   ("скажи","розкажи","придумай","скільки","вимови","зроби","порахуй",
+              "скажи мені","будь ласка","будь-ласка","пожалуйста","скажи будь ласка"),
     "cmds": {
-        "stop":        ("стоп","прекрати","зупинись","хватит","stop","enough","halt", "завали глотку", "завали єбало"),
-        "ctime":       ("поточний час","котра година","скільки часу","what time is it","current time","what's the time"),
-        "stats":       ("статистика","стан системи","статус заліза","як там залізо","system stats","system status","how's the hardware"),
-        "wakeup":      ("прокидайся татко повернувся","wake up daddy's home"),
-        "window":      ("сховай все крім","згорни все крім","закрий вікно","розгорни вікно","закрий браузер","згорни все","hide everything except","minimize everything except","close window","restore window","minimize all"),
-        "dictation":   ("напиши","надрукуй","друкуй","пиши","type","write","print"),
-        "confirm_yes": ("так","вірно","підтверджую","yes","confirm","correct"),
-        "confirm_no":  ("ні","скасуй","відміна","no","cancel","abort"),
-        "screen":      ("перевір екран","що на екрані","подивись на екран","аналіз екрану","що бачиш","check screen","what's on screen","analyze screen","what do you see","look at screen"),
-        "plugin":        ("впровади плагін","запусти плагін","завантаж плагін","активуй плагін","run plugin","launch plugin","load plugin","activate plugin"),
-        "plugin_create":   ("створи плагін","напиши плагін","зроби плагін","новий плагін","create plugin","make plugin","new plugin","write plugin"),
-        "plugin_rollback": ("скасуй плагін","відкоти плагін","видали плагін","відміни плагін","remove plugin","delete plugin","rollback plugin","undo plugin"),
-        "ai_mode_ollama":  ("режим гемма","режим олама","локальний режим","офлайн режим","gemma mode","ollama mode","local mode","offline mode"),
-        "ai_mode_gemini":  ("режим джеміні","режим гемині","онлайн режим","хмарний режим","gemini mode","online mode","cloud mode"),
-        "overlay":     ("оверлей","покажи оверлей","відкрий оверлей","запусти оверлей","overlay","show overlay","open overlay"),
-        "overlay_hide":("сховай оверлей","закрий оверлей","прибери оверлей","вимкни оверлей","hide overlay","close overlay","disable overlay"),
-        "overlay_move":("оверлей в","перемісти оверлей","оверлей куток","оверлей кут","move overlay","overlay to","overlay corner"),
-        "music_title": ("що зараз грає","назва пісні","яка пісня","who's playing","what's the song","song title"),
-        "music_toggle_play_pause":("продовжуй музику","зупини музику","пауза музика","віднови музику","постав на паузу","pause music","play music","resume music","stop music","toggle music"),
-        "music_next":("некст трек","наступна пісня","пропусти пісню","ще пісню","некст","давай некст","next track","next song","skip song","next"),
-        "music_prev":("давай ще раз","попередня пісня","минулий трек","ще раз","previous song","previous track","go back"),
-        "music_info":("що грає","що зараз грає","що за пісня","яка пісня","яка пісня грає","назва треку","хто співає","what's playing","what song is this","current track","who sings"),
-        "file_read":   ("прочитай файл","читай файл","відкрий файл","покажи файл","read file","open file","show file"),
-        "file_write":  ("запиши у файл","створи файл","новий файл","напиши файл","write file","create file","new file"),
-        "file_append": ("дозапиши у файл","додай до файлу","append to file","add to file"),
-        "file_list":   ("список файлів","що в папці","покажи папку","list files","show folder","what's in folder"),
-        "file_delete": ("видали файл","стерти файл","delete file","remove file"),
-        "file_rename": ("перейменуй файл","rename file"),
-
+        "stop": (
+            # укр
+            "стоп","прекрати","зупинись","замовкни","досить","тихо","мовчи","хватить",
+            "стоп говорити","припини говорити","зупини мову","годі",
+            # рус
+            "хватит","стой","заткнись","остановись","молчи","тихо","стоп говорить",
+            "завали глотку","завали єбало",
+            # eng
+            "stop","enough","halt","shut up","be quiet","silence","stop talking",
+        ),
+        "ctime": (
+            # укр
+            "котра година","поточний час","скільки часу","який час","час зараз",
+            "покажи час","скажи час","час","яка година","скільки годин",
+            # рус
+            "который час","сколько времени","текущее время","скажи время","какое время","время",
+            # eng
+            "what time is it","current time","what's the time","tell me the time","time please","what time",
+        ),
+        "stats": (
+            # укр
+            "статистика","стан системи","статус заліза","як там залізо","системна інформація",
+            "температура процесора","завантаження системи","покажи статистику","навантаження",
+            "стан компютера","що з залізом","оперативна память","скільки оперативки",
+            # рус
+            "статистика системы","состояние системы","загрузка процессора","температура","нагрузка",
+            "что с железом","память","оперативка","как там система",
+            # eng
+            "system stats","system status","hardware status","how's the hardware","cpu usage",
+            "ram usage","show stats","performance","system info",
+        ),
+        "wakeup": (
+            "прокидайся татко повернувся","wake up daddy's home",
+            "прокидайся","вставай","активуйся",
+        ),
+        "window": (
+            # укр
+            "сховай все крім","згорни все крім","закрий вікно","розгорни вікно",
+            "закрий браузер","згорни все","розгорни все","мінімізуй вікно",
+            "розгорни мінімізоване","переключи вікно",
+            # рус
+            "скрой все кроме","сверни все кроме","закрой окно","разверни окно",
+            "закрой браузер","сверни все","разверни все","свернуть окно",
+            # eng
+            "hide everything except","minimize everything except","close window","restore window",
+            "minimize all","maximize window","switch window","hide window",
+        ),
+        "dictation": (
+            # укр
+            "напиши","надрукуй","друкуй","пиши","набери","напечатай","введи текст",
+            "напиши текст","надрукуй текст","набери текст",
+            # рус
+            "напиши","напечатай","введи","набери","пиши",
+            # eng
+            "type","write","print","type this","write this","input text",
+        ),
+        "confirm_yes": (
+            "так","вірно","підтверджую","правильно","погоджуюсь","ок","окей","добре","звісно","авжеж",
+            "да","верно","правильно","согласен","конечно","ага",
+            "yes","confirm","correct","sure","ok","okay","agreed","absolutely","yep",
+        ),
+        "confirm_no": (
+            "ні","скасуй","відміна","не треба","відмовляюсь","неправильно","помилка",
+            "нет","отмена","не надо","неправильно","ошибка",
+            "no","cancel","abort","wrong","stop it","never mind","nope",
+        ),
+        "screen": (
+            # укр
+            "перевір екран","що на екрані","подивись на екран","аналіз екрану",
+            "що бачиш","що відбувається на екрані","проаналізуй екран","скрін",
+            "що там на екрані","прочитай екран","опиши екран",
+            # рус
+            "проверь экран","что на экране","посмотри на экран","анализ экрана",
+            "что видишь","что происходит на экране","опиши экран","прочитай экран",
+            # eng
+            "check screen","what's on screen","analyze screen","what do you see",
+            "look at screen","describe screen","read screen","screen analysis",
+        ),
+        "plugin": (
+            # укр
+            "впровади плагін","запусти плагін","завантаж плагін","активуй плагін",
+            "виконай плагін","запусти розширення","активуй розширення","увімкни плагін",
+            # рус
+            "запусти плагин","запусти расширение","активируй плагин","загрузи плагин",
+            # eng
+            "run plugin","launch plugin","load plugin","activate plugin","execute plugin","start plugin",
+        ),
+        "plugin_create": (
+            # укр
+            "створи плагін","напиши плагін","зроби плагін","новий плагін",
+            "розроби плагін","згенеруй плагін","додай плагін",
+            # рус
+            "создай плагин","напиши плагин","сделай плагин","новый плагин","разработай плагин",
+            # eng
+            "create plugin","make plugin","new plugin","write plugin","build plugin","generate plugin",
+        ),
+        "plugin_rollback": (
+            # укр
+            "скасуй плагін","відкоти плагін","видали плагін","відміни плагін","видали розширення",
+            # рус
+            "отмени плагин","удали плагин","откати плагин","убери плагин",
+            # eng
+            "remove plugin","delete plugin","rollback plugin","undo plugin","uninstall plugin",
+        ),
+        "ai_mode_ollama": (
+            # укр
+            "режим гемма","режим олама","локальний режим","офлайн режим","переключи на олама",
+            "увімкни офлайн","локальна модель","офлайн модель",
+            # рус
+            "режим оллама","локальный режим","офлайн режим","включи оффлайн","локальная модель",
+            # eng
+            "gemma mode","ollama mode","local mode","offline mode","switch to ollama","local ai",
+        ),
+        "ai_mode_gemini": (
+            # укр
+            "режим джеміні","режим гемині","онлайн режим","хмарний режим","переключи на джеміні",
+            "увімкни онлайн","хмарна модель","режим гугл",
+            # рус
+            "режим джемини","онлайн режим","облачный режим","включи онлайн","облачная модель",
+            # eng
+            "gemini mode","online mode","cloud mode","switch to gemini","google ai mode",
+        ),
+        "overlay": (
+            # укр
+            "оверлей","покажи оверлей","відкрий оверлей","запусти оверлей",
+            "увімкни оверлей","відобрази оверлей","покажи статус",
+            # рус
+            "оверлей","покажи оверлей","открой оверлей","включи оверлей","показать оверлей",
+            # eng
+            "overlay","show overlay","open overlay","enable overlay","display overlay",
+        ),
+        "overlay_hide": (
+            # укр
+            "сховай оверлей","закрий оверлей","прибери оверлей","вимкни оверлей","зникни оверлей",
+            # рус
+            "скрой оверлей","закрой оверлей","убери оверлей","выключи оверлей","скрыть оверлей",
+            # eng
+            "hide overlay","close overlay","disable overlay","remove overlay","turn off overlay",
+        ),
+        "overlay_move": (
+            # укр
+            "оверлей в","перемісти оверлей","оверлей куток","оверлей кут","перемісти статус",
+            # рус
+            "переместить оверлей","оверлей в угол","двигай оверлей","перенеси оверлей",
+            # eng
+            "move overlay","overlay to","overlay corner","reposition overlay","place overlay",
+        ),
+        "music_toggle_play_pause": (
+            # укр
+            "продовжуй музику","зупини музику","пауза музика","віднови музику","постав на паузу",
+            "play","пауза","грай","включи музику","вимкни музику","музика стоп","старт музика",
+            # рус
+            "продолжи музыку","останови музыку","пауза","возобнови музыку","поставь на паузу",
+            "включи музыку","выключи музыку","музыку стоп","играй",
+            # eng
+            "pause music","play music","resume music","stop music","toggle music",
+            "music pause","music play","toggle playback",
+        ),
+        "music_next": (
+            # укр
+            "некст трек","наступна пісня","пропусти пісню","ще пісню","некст","давай некст",
+            "наступний трек","вперед","переключи пісню","наступне",
+            # рус
+            "следующий трек","следующая песня","пропусти","некст","следующее","вперёд трек",
+            # eng
+            "next track","next song","skip song","next","skip","forward track",
+        ),
+        "music_prev": (
+            # укр
+            "давай ще раз","попередня пісня","минулий трек","ще раз","назад трек","попередній трек",
+            # рус
+            "предыдущая песня","прошлый трек","ещё раз","назад трек","предыдущее",
+            # eng
+            "previous song","previous track","go back","last track","back song","prev",
+        ),
+        "music_info": (
+            # укр
+            "що грає","що зараз грає","що за пісня","яка пісня","яка пісня грає",
+            "назва треку","хто співає","назва пісні","який трек",
+            # рус
+            "что играет","что сейчас играет","что за песня","какая песня","название трека",
+            "кто поёт","название песни","какой трек",
+            # eng
+            "what's playing","what song is this","current track","who sings","song name",
+            "track name","what's the song","music info",
+        ),
+        "file_read": (
+            # укр
+            "прочитай файл","читай файл","відкрий файл","покажи файл","виведи файл","зміст файлу",
+            # рус
+            "прочитай файл","читай файл","открой файл","покажи файл","содержимое файла",
+            # eng
+            "read file","open file","show file","display file","file content","view file",
+        ),
+        "file_write": (
+            # укр
+            "запиши у файл","створи файл","новий файл","напиши файл","збережи у файл","зроби файл",
+            # рус
+            "запиши в файл","создай файл","новый файл","напиши файл","сохрани в файл",
+            # eng
+            "write file","create file","new file","save to file","make file",
+        ),
+        "file_append": (
+            # укр
+            "дозапиши у файл","додай до файлу","допиши файл","дописати до файлу",
+            # рус
+            "дозапиши в файл","добавь в файл","допиши в файл","дописать в файл",
+            # eng
+            "append to file","add to file","write to file","add text to file",
+        ),
+        "file_list": (
+            # укр
+            "список файлів","що в папці","покажи папку","перелік файлів","вміст папки","покажи файли",
+            # рус
+            "список файлов","что в папке","покажи папку","содержимое папки","покажи файлы",
+            # eng
+            "list files","show folder","what's in folder","folder contents","list directory","show files",
+        ),
+        "file_delete": (
+            # укр
+            "видали файл","стерти файл","знищи файл","прибери файл","вилучи файл",
+            # рус
+            "удали файл","сотри файл","уничтожь файл","убери файл",
+            # eng
+            "delete file","remove file","erase file","destroy file",
+        ),
+        "file_rename": (
+            # укр
+            "перейменуй файл","зміни назву файлу","перейменувати файл",
+            # рус
+            "переименуй файл","измени название файла","переименовать файл",
+            # eng
+            "rename file","change filename","rename",
+        ),
     },
 }
 
-def recognize_cmd(command):
-    """Окрема функція нечіткого розпізнавання команд."""
-    RC = {'cmd': '', 'percent': 0}
-    for c, v in OPTS['cmds'].items():
-        for x in v:
-            vrt = fuzz.ratio(command, x)
-            if vrt > RC['percent']:
-                RC['cmd'] = c
-                RC['percent'] = vrt
-    return RC
+# ── Нормалізація + передкомпільований список фраз ─────────────────────────────
+_RE_PUNCT = re.compile(r"[^\w\s]")
+_RE_SPACES = re.compile(r"\s+")
+
+def _normalize(text: str) -> str:
+    """Нижній регістр, без знаків пунктуації, нормалізовані пробіли."""
+    text = _RE_PUNCT.sub(" ", text.lower())
+    return _RE_SPACES.sub(" ", text).strip()
+
+# Плоский список (фраза, ключ_команди) — будується один раз при старті
+_CMD_PHRASES: list[tuple[str, str]] = [
+    (_normalize(phrase), cmd_key)
+    for cmd_key, phrases in OPTS["cmds"].items()
+    for phrase in phrases
+]
+_CMD_PHRASE_STRINGS = [p for p, _ in _CMD_PHRASES]
+
+def recognize_cmd(command: str) -> dict:
+    """
+    Розпізнавання через rapidfuzz.process.extractOne — O(n) по C++,
+    scorer=token_set_ratio ігнорує порядок слів і часткові збіги.
+    """
+    q = _normalize(command)
+    if not q:
+        return {"cmd": "", "percent": 0}
+
+    if _HAS_RAPIDFUZZ:
+        result = rfprocess.extractOne(
+            q, _CMD_PHRASE_STRINGS,
+            scorer=fuzz.token_set_ratio,
+            score_cutoff=0,
+        )
+        if result:
+            phrase, score, idx = result
+            return {"cmd": _CMD_PHRASES[idx][1], "percent": int(score)}
+    else:
+        # fallback — fuzzywuzzy
+        best = {"cmd": "", "percent": 0}
+        for phrase, cmd_key in _CMD_PHRASES:
+            s = max(fuzz.ratio(q, phrase), fuzz.token_set_ratio(q, phrase))
+            if s > best["percent"]:
+                best = {"cmd": cmd_key, "percent": s}
+        return best
+
+    return {"cmd": "", "percent": 0}
 
 def stop_speaking():
     global _tts_proc
@@ -1036,7 +1359,8 @@ def execute_cmd(cmd: str, raw_text: str) -> None:
 
             elif _file_cmd_pending == "read":
                 content = file_ops.read_file(path)
-                ask_ai(f"Ось вміст файлу, сер:\n{content}")
+                for sentence in ask_ai_stream(f"Ось вміст файлу, сер:\n{content}"):
+                    speak(sentence)
 
             elif _file_cmd_pending == "write":
                 if not _file_write_from:
@@ -1124,9 +1448,13 @@ def execute_cmd(cmd: str, raw_text: str) -> None:
         # ── перевіряємо кастомні команди ──────────────────────────────────
         custom_cmds = load_custom_commands()
         best_custom = {"idx": -1, "score": 0}
+        q_norm = _normalize(raw_text)
         for i, cc in enumerate(custom_cmds):
             for phrase in cc["phrases"]:
-                score = fuzz.ratio(raw_text, phrase)
+                score = max(
+                    fuzz.ratio(q_norm, _normalize(phrase)),
+                    fuzz.token_set_ratio(q_norm, _normalize(phrase)),
+                )
                 if score > best_custom["score"]:
                     best_custom = {"idx": i, "score": score}
         if best_custom["score"] > 65:
@@ -1135,39 +1463,63 @@ def execute_cmd(cmd: str, raw_text: str) -> None:
                 custom_cmds[best_custom["idx"]]["name"]
             )
         elif raw_text.strip():
-            speak(ask_ai(raw_text))
+            for sentence in ask_ai_stream(raw_text):
+                speak(sentence)
 
 
 # ── Распознавание речи ─────────────────────────────────────────────────────────
 def _speech_callback(recognizer, audio) -> None:
     if is_speaking:
         try:
-            voice = recognizer.recognize_google(audio, language="uk-UA").lower()
-            stop_words = ("стоп", "прекрати", "зупинись", "хватит", "stop", "enough", "halt")
-            if any(fuzz.ratio(w, voice) > 70 or w in voice for w in stop_words):
+            voice = _normalize(recognizer.recognize_google(audio, language="uk-UA"))
+            stop_words = ("стоп", "прекрати", "зупинись", "хватит", "замовкни", "stop", "enough", "halt", "shut up")
+            if any(fuzz.token_set_ratio(w, voice) > 80 or w in voice for w in stop_words):
                 stop_speaking()
         except:
             pass
         return
     try:
         voice = recognizer.recognize_google(audio, language="uk-UA").lower()
+        voice = _normalize(voice)
         print(f"[log] Почув: {voice}")
-        first_word = voice.split()[0] if voice.split() else ""
-        if not any(fuzz.ratio(first_word, a) > 60 for a in OPTS["alias"]):
-            # якщо чекаємо опис плагіну — приймаємо без алiасу
-            if _plugin_create_pending:
+
+        # перевіряємо алiас у перших 3 словах (не лише першому)
+        words = voice.split()
+        head_words = words[:3]
+        alias_found = any(
+            fuzz.ratio(w, a) > 75
+            for w in head_words
+            for a in OPTS["alias"]
+        )
+        if not alias_found:
+            if _plugin_create_pending or _file_cmd_pending:
                 execute_cmd("unknown", voice)
             return
+
+        # знімаємо алiас з початку рядка
         query = voice
         for a in OPTS["alias"]:
-            query = query.replace(a, "").strip()
+            query = re.sub(r'\b' + re.escape(a) + r'\b', '', query)
+        query = _RE_SPACES.sub(" ", query).strip()
         raw_query = query
+
+        # знімаємо tbr-слова
         for w in OPTS["tbr"]:
-            query = query.replace(w, "").strip()
+            query = re.sub(r'\b' + re.escape(w) + r'\b', '', query)
+        query = _RE_SPACES.sub(" ", query).strip()
+
         cmd_res = recognize_cmd(query)
+        # двопрохідне: якщо stripped query дав поганий score — пробуємо raw_query
+        if cmd_res["percent"] < 80:
+            cmd_res2 = recognize_cmd(raw_query)
+            if cmd_res2["percent"] > cmd_res["percent"]:
+                cmd_res = cmd_res2
+
         if raw_query.strip():
             log_queue.put(("user", raw_query))
-        if cmd_res["percent"] > 50:
+            print(f"[log] Команда: {cmd_res['cmd']} ({cmd_res['percent']}%)")
+
+        if cmd_res["percent"] > 80:
             execute_cmd(cmd_res["cmd"], raw_query)
         else:
             execute_cmd("unknown", raw_query)
@@ -1202,12 +1554,14 @@ def _voice_core() -> None:
 
 # ── Flet UI ────────────────────────────────────────────────────────────────────
 def build_ui(page: ft.Page) -> None:
-    page.title = "Tomix — AI Assistant"
+    page.title = "Tomix — AI Voice Assistant"
     page.window_icon = "logo.png"
-    page.bgcolor = "#16171F"
-    page.padding = 20
+    page.bgcolor = "#08080c"
+    page.padding = 0
     page.window.width = 520
     page.window.height = 900
+    page.window.min_width = 400
+    page.window.min_height = 600
     page.window.resizable = True
     def on_key(e: ft.KeyboardEvent):
         if e.key == " " and e.ctrl:
@@ -1252,6 +1606,20 @@ def build_ui(page: ft.Page) -> None:
 
     _pulse = {"active": False}
 
+    # ── Статус під колом ──────────────────────────────────────────────────────
+    _STATE_META = {
+        "listening":  {"label": "● СЛУХАЮ",   "color": "#00ff88"},
+        "speaking":   {"label": "● ГОВОРЮ",   "color": "#e94560"},
+        "calibrating":{"label": "◌ КАЛІБРУЮ", "color": "#556080"},
+        "thinking":   {"label": "… ДУМАЄ",    "color": "#ffaa00"},
+    }
+    status_label = ft.Text(
+        "◌ КАЛІБРУЮ", color="#556080",
+        size=11, weight=ft.FontWeight.W_600,
+        text_align=ft.TextAlign.CENTER,
+        animate_opacity=ft.Animation(300, ft.AnimationCurve.EASE_IN_OUT),
+    )
+
     # ── Tkinter overlay — рендериться завжди, незалежно від фокусу Flutter ───────
     _tk_queue: "queue.Queue" = queue.Queue()
 
@@ -1281,9 +1649,10 @@ def build_ui(page: ft.Page) -> None:
             _reposition("br")
 
             _C = {
-                "listening": {"bar": "#e94560", "fg": "#e94560", "txt": "СЛУХАЮ"},
-                "speaking":  {"bar": "#e94560", "fg": "#e94560", "txt": "ГОВОРЮ"},
-                "other":     {"bar": "#e94560", "fg": "#e94560", "txt": "КАЛІБР."},
+                "listening":  {"bar": "#00ff88", "fg": "#00ff88", "txt": "СЛУХАЮ"},
+                "speaking":   {"bar": "#e94560", "fg": "#e94560", "txt": "ГОВОРЮ"},
+                "thinking":   {"bar": "#ffaa00", "fg": "#ffaa00", "txt": "ДУМАЄ…"},
+                "other":      {"bar": "#556080", "fg": "#556080", "txt": "КАЛІБР."},
             }
 
             # ── Left accent bar ──────────────────────────────────────────────
@@ -1295,7 +1664,7 @@ def build_ui(page: ft.Page) -> None:
             j_col = tk.Frame(root, width=62, bg="#1e1f22")
             j_col.pack(side="left", fill="y")
             j_col.pack_propagate(False)
-            j_lbl = tk.Label(j_col, text="J", font=("Segoe UI", 30, "bold"),
+            j_lbl = tk.Label(j_col, text="T", font=("Segoe UI", 30, "bold"),
                              fg="#e94560", bg="#1e1f22")
             j_lbl.pack(expand=True)
 
@@ -1339,7 +1708,7 @@ def build_ui(page: ft.Page) -> None:
             _cur_pos = {"v": "br"}
 
             def _set_state_colors(st: str) -> None:
-                key = "speaking" if st == "speaking" else ("listening" if st == "listening" else "other")
+                key = st if st in _C else "other"
                 c = _C[key]
                 bar.configure(bg=c["bar"])
                 j_lbl.configure(fg=c["fg"])
@@ -1366,7 +1735,7 @@ def build_ui(page: ft.Page) -> None:
                             _set_state_colors(msg[1])
                         elif cmd == "msg":
                             role, text = msg[1], msg[2]
-                            prefix = "Ви: " if role == "user" else "J: "
+                            prefix = "Ви: " if role == "user" else "T: "
                             full = prefix + text
                             msg_lbl.configure(
                                 text=full[:72] + "…" if len(full) > 72 else full,
@@ -1387,22 +1756,52 @@ def build_ui(page: ft.Page) -> None:
     def set_state(state: str) -> None:
         _pulse["active"] = (state == "speaking")
         _tk_queue.put(("state", state))
+        meta = _STATE_META.get(state, _STATE_META["calibrating"])
+        status_label.value = meta["label"]
+        status_label.color = meta["color"]
         if not _ov["active"]:
             page.update()
 
-    log_column = ft.Column(spacing=6, height=200, scroll=ft.ScrollMode.HIDDEN)
-    log_container = ft.Container(
-        content=log_column,
-        bgcolor=bg,
-        border_radius=12,
-        padding=ft.Padding(left=12, right=12, top=12, bottom=12),
-        border=ft.Border.all(1, "#1e1e3a"),
-        height=220,
+    log_empty = ft.Container(
+        content=ft.Text(
+            "Скажи «Томікс» щоб почати…",
+            color="#664455", size=12, text_align=ft.TextAlign.CENTER,
+        ),
+        alignment=ft.Alignment(0, 0),
+        expand=True,
         visible=True,
+    )
+    log_column = ft.Column(spacing=6, scroll=ft.ScrollMode.AUTO)
+    log_container = ft.Container(
+        content=ft.Column([
+            ft.Container(
+                content=ft.Row([
+                    ft.Text("ЛОГ ДІАЛОГУ", color="#ffffff", size=10,
+                            weight=ft.FontWeight.W_700),
+                    ft.Text("● live", color=accent, size=9),
+                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                bgcolor="#1a0810",
+                padding=ft.Padding(left=12, right=12, top=7, bottom=7),
+            ),
+            ft.Container(
+                content=ft.Stack([log_empty, log_column]),
+                bgcolor=bg,
+                padding=ft.Padding(left=12, right=12, top=8, bottom=8),
+                height=186,
+                clip_behavior=ft.ClipBehavior.HARD_EDGE,
+            ),
+        ], spacing=0),
+        border_radius=3,
+        border=ft.Border.all(1, "#2a1020"),
+        clip_behavior=ft.ClipBehavior.HARD_EDGE,
     )
 
     def add_log(role: str, text: str) -> None:
         is_user = (role == "user")
+        log_empty.visible = False
+        # обмежуємо до 60 повідомлень
+        if len(log_column.controls) > 60:
+            log_column.controls.pop(0)
         log_column.controls.append(
             ft.Container(
                 content=ft.Text(
@@ -1411,7 +1810,7 @@ def build_ui(page: ft.Page) -> None:
                     size=12, selectable=True,
                 ),
                 bgcolor="#131328" if is_user else "#1a0f1f",
-                border_radius=8,
+                border_radius=3,
                 padding=ft.Padding(left=10, right=10, top=6, bottom=6),
                 alignment=ft.Alignment(1, 0) if is_user else ft.Alignment(-1, 0),
             )
@@ -1422,12 +1821,20 @@ def build_ui(page: ft.Page) -> None:
         if is_user:
             _ovl_user.value = f"Ви: {short}"
         else:
-            _ovl_ai.value = f"J: {short}"
+            _ovl_ai.value = f"T: {short}"
         page.update()
+        try:
+            log_column.scroll_to(offset=999999, duration=200)
+        except Exception:
+            pass
+
+    _rate_label = ft.Text("190 сл/хв", color=secondary, size=11)
 
     def on_rate(e):
         global tts_rate
         tts_rate = int(e.control.value)
+        _rate_label.value = f"{tts_rate} сл/хв"
+        page.update()
 
     # ── Вкладка команд ────────────────────────────────────────────────────────
     cmd_list = ft.Column(spacing=6, scroll=ft.ScrollMode.AUTO, height=300)
@@ -1435,7 +1842,12 @@ def build_ui(page: ft.Page) -> None:
     def refresh_cmd_list():
         """Оновити список команд у UI."""
         cmd_list.controls.clear()
-        for i, cc in enumerate(load_custom_commands()):
+        cmds = load_custom_commands()
+        if not cmds:
+            cmd_list.controls.append(
+                ft.Text("Немає власних команд. Додай першу нижче.", color="#887799", size=11)
+            )
+        for i, cc in enumerate(cmds):
             phrases_str = ", ".join(cc["phrases"])
             cmd_list.controls.append(
                 ft.Container(
@@ -1444,15 +1856,15 @@ def build_ui(page: ft.Page) -> None:
                             ft.Text(cc["name"], color=accent, size=13,
                                     weight=ft.FontWeight.BOLD),
                             ft.Text(phrases_str, color=secondary, size=11),
-                            ft.Text(cc["path"], color="#333355", size=10),
+                            ft.Text(cc["path"], color="#776688", size=10),
                         ], expand=True, spacing=2),
                         ft.TextButton("✕", on_click=lambda e, idx=i: delete_cmd(idx),
                             style=ft.ButtonStyle(color=accent)),
                     ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                     bgcolor=bg,
-                    border_radius=8,
+                    border_radius=3,
                     padding=ft.Padding(left=12, right=8, top=8, bottom=8),
-                    border=ft.Border.all(1, "#1e1e3a"),
+                    border=ft.Border.all(1, "#2a1020"),
                 )
             )
         page.update()
@@ -1469,21 +1881,21 @@ def build_ui(page: ft.Page) -> None:
         label="Назва програми",
         hint_text="напр. Chrome",
         bgcolor=bg, color="#c0c8e0",
-        border_color="#1e1e3a", focused_border_color=accent,
+        border_color="#2a1020", focused_border_color=accent,
         label_style=ft.TextStyle(color=secondary),
     )
     path_field = ft.TextField(
         label="Шлях до програми",
         hint_text=r"C:\Program Files\...pp.exe",
         bgcolor=bg, color="#c0c8e0",
-        border_color="#1e1e3a", focused_border_color=accent,
+        border_color="#2a1020", focused_border_color=accent,
         label_style=ft.TextStyle(color=secondary),
     )
     phrases_field = ft.TextField(
         label="Голосові команди (через кому)",
         hint_text="відкрий хром, запусти браузер",
         bgcolor=bg, color="#c0c8e0",
-        border_color="#1e1e3a", focused_border_color=accent,
+        border_color="#2a1020", focused_border_color=accent,
         label_style=ft.TextStyle(color=secondary),
     )
 
@@ -1506,10 +1918,20 @@ def build_ui(page: ft.Page) -> None:
         scroll=ft.ScrollMode.AUTO,
         spacing=10,
         controls=[
-            ft.Text("КОМАНДИ", color=secondary, size=11),
+            ft.Container(
+                content=ft.Text("КОМАНДИ", color="#ffffff", size=10,
+                                weight=ft.FontWeight.W_700),
+                bgcolor="#1a0810", border_radius=3,
+                padding=ft.Padding(left=12, right=12, top=7, bottom=7),
+            ),
             cmd_list,
-            ft.Divider(color="#1e1e3a", height=10),
-            ft.Text("ДОДАТИ КОМАНДУ", color=secondary, size=11),
+            ft.Divider(color="#2a1020", height=10),
+            ft.Container(
+                content=ft.Text("ДОДАТИ КОМАНДУ", color="#ffffff", size=10,
+                                weight=ft.FontWeight.W_700),
+                bgcolor="#1a0810", border_radius=3,
+                padding=ft.Padding(left=12, right=12, top=7, bottom=7),
+            ),
             name_field,
             path_field,
             phrases_field,
@@ -1525,12 +1947,12 @@ def build_ui(page: ft.Page) -> None:
     # ── AI режим: сегментований перемикач ────────────────────────────────────
     _ollama_hint = ft.Text(
         "⚠  Перший запит Gemma 4 може зайняти 1–3 хв — модель завантажується в пам'ять.",
-        color="#666688", size=10,
+        color="#9999bb", size=10,
         visible=(AI_MODE == "ollama"),
     )
     _gemini_hint = ft.Text(
         "⚠  API не нескінченний, стеж за лімітом запитів від Google. Якщо щось пішло не так — перемикай на Gemma 4.",
-        color="#666688", size=10,
+        color="#9999bb", size=10,
         visible=(AI_MODE == "gemini")
     )
 
@@ -1538,7 +1960,7 @@ def build_ui(page: ft.Page) -> None:
         content=ft.Text("⬡  Gemma 4  (локально)", size=12, weight=ft.FontWeight.BOLD,
                         color="#ffffff" if AI_MODE == "ollama" else secondary),
         bgcolor= "#20cccc" if AI_MODE == "ollama" else bg,
-        border_radius=ft.BorderRadius(top_left=8, bottom_left=8, top_right=0, bottom_right=0),
+        border_radius=ft.BorderRadius(top_left=3, bottom_left=3, top_right=0, bottom_right=0),
         border=ft.Border.all(1, "#20cccc"),
         padding=ft.Padding(left=14, right=14, top=10, bottom=10),
         expand=True,
@@ -1547,7 +1969,7 @@ def build_ui(page: ft.Page) -> None:
         content=ft.Text("✦  Gemini API  (хмара)", size=12, weight=ft.FontWeight.BOLD,
                         color="#ffffff" if AI_MODE == "gemini" else secondary),
         bgcolor="#a78bfa" if AI_MODE == "gemini" else bg,
-        border_radius=ft.BorderRadius(top_left=0, bottom_left=0, top_right=8, bottom_right=8),
+        border_radius=ft.BorderRadius(top_left=0, bottom_left=0, top_right=3, bottom_right=3),
         border=ft.Border.all(1, "#a78bfa"),
         padding=ft.Padding(left=14, right=14, top=10, bottom=10),
         expand=True,
@@ -1591,11 +2013,17 @@ def build_ui(page: ft.Page) -> None:
         controls=[
             ft.Container(height=10),
             ft.Row([pulse_wrapper], alignment=ft.MainAxisAlignment.CENTER),
-            ft.Divider(color="#1e1e3a", height=20),
-            ft.Text("ЛОГ ДІАЛОГУ", color=accent, size=11),
+            ft.Row([status_label], alignment=ft.MainAxisAlignment.CENTER),
+            ft.Divider(color="#2a1020", height=16),
             log_container,
-            ft.Divider(color="#1e1e3a", height=20),
-            ft.Text("AI МОДЕЛЬ", color=accent, size=11),
+            ft.Divider(color="#2a1020", height=16),
+            ft.Container(
+                content=ft.Text("AI МОДЕЛЬ", color="#ffffff", size=10,
+                                weight=ft.FontWeight.W_700),
+                bgcolor="#1a0810",
+                border_radius=3,
+                padding=ft.Padding(left=12, right=12, top=7, bottom=7),
+            ),
             ft.Row(controls=[_seg_ollama, _seg_gemini], spacing=0),
             _ollama_hint,
             _gemini_hint,
@@ -1622,7 +2050,7 @@ def build_ui(page: ft.Page) -> None:
         max_lines=12,
         bgcolor=bg,
         color="#c0c8e0",
-        border_color="#1e1e3a",
+        border_color="#2a1020",
         focused_border_color=accent,
         label_style=ft.TextStyle(color=secondary),
         hint_text="def run(jarvis): jarvis.speak(...)",
@@ -1631,7 +2059,7 @@ def build_ui(page: ft.Page) -> None:
         label="Назва плагіну",
         hint_text="Ім'я плагіну",
         bgcolor=bg, color="#c0c8e0",
-        border_color="#1e1e3a",
+        border_color="#2a1020",
         focused_border_color=accent,
         label_style=ft.TextStyle(color=secondary),
     )
@@ -1675,6 +2103,10 @@ def build_ui(page: ft.Page) -> None:
     def refresh_plugin_list():
         plugins = plugin_manager.list_plugins()
         plugin_list_col.controls.clear()
+        if not plugins:
+            plugin_list_col.controls.append(
+                ft.Text("Плагіни не встановлені. Скажи «Томікс, створи плагін».", color="#887799", size=11)
+            )
         for p in plugins:
             plugin_list_col.controls.append(
                 ft.Container(
@@ -1683,9 +2115,9 @@ def build_ui(page: ft.Page) -> None:
                         ft.TextButton("▶", on_click=lambda e, name=p: _run_plugin(name),
                             style=ft.ButtonStyle(color="#00ff88")),
                     ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                    bgcolor=bg, border_radius=8,
+                    bgcolor=bg, border_radius=3,
                     padding=ft.Padding(left=12, right=8, top=6, bottom=6),
-                    border=ft.Border.all(1, "#1e1e3a"),
+                    border=ft.Border.all(1, "#2a1020"),
                 )
             )
         page.update()
@@ -1707,10 +2139,20 @@ def build_ui(page: ft.Page) -> None:
         visible=False,
         controls=[
             ft.Container(height=10),
-            ft.Text("ВСТАНОВЛЕНІ ПЛАГІНИ", color=secondary, size=11),
+            ft.Container(
+                content=ft.Text("ВСТАНОВЛЕНІ ПЛАГІНИ", color="#ffffff", size=10,
+                                weight=ft.FontWeight.W_700),
+                bgcolor="#1a0810", border_radius=3,
+                padding=ft.Padding(left=12, right=12, top=7, bottom=7),
+            ),
             plugin_list_col,
-            ft.Divider(color="#1e1e3a", height=10),
-            ft.Text("НОВИЙ ПЛАГІН", color=secondary, size=11),
+            ft.Divider(color="#2a1020", height=10),
+            ft.Container(
+                content=ft.Text("НОВИЙ ПЛАГІН", color="#ffffff", size=10,
+                                weight=ft.FontWeight.W_700),
+                bgcolor="#1a0810", border_radius=3,
+                padding=ft.Padding(left=12, right=12, top=7, bottom=7),
+            ),
             plugin_name_field,
             plugin_code_field,
             plugin_status,
@@ -1785,7 +2227,7 @@ def build_ui(page: ft.Page) -> None:
     # Ліва акцентна смужка (як індикатор активного каналу в Discord)
     overlay_view = ft.Container(
         bgcolor="#1e1f22",
-        border_radius=8,
+        border_radius=3,
         border=ft.Border.all(1, "#2f3136"),
         clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
         padding=ft.Padding(left=0, right=0, top=0, bottom=0),
@@ -1841,7 +2283,7 @@ def build_ui(page: ft.Page) -> None:
             label=label, value=value, hint_text="#rrggbb",
             width=130,
             bgcolor=bg, color="#c0c8e0",
-            border_color="#1e1e3a", focused_border_color=accent,
+            border_color="#2a1020", focused_border_color=accent,
             label_style=ft.TextStyle(color=secondary),
             on_blur=lambda _e: _save_custom_theme(),
         )
@@ -1873,8 +2315,8 @@ def build_ui(page: ft.Page) -> None:
         theme_status.color = "#00ff88"
         page.update()
 
-    _ollama_status_dot = ft.Text("●", color="#555577", size=11)
-    _ollama_status_txt = ft.Text("перевірка…", color="#555577", size=11)
+    _ollama_status_dot = ft.Text("●", color="#8888aa", size=11)
+    _ollama_status_txt = ft.Text("перевірка…", color="#8888aa", size=11)
 
     def _refresh_ollama_status():
         if _ollama_available():
@@ -1895,7 +2337,7 @@ def build_ui(page: ft.Page) -> None:
         value=load_settings().get("ollama_model", "gemma4"),
         bgcolor=bg,
         color="#c0c8e0",
-        border_color="#1e1e3a",
+        border_color="#2a1020",
         focused_border_color=accent,
         label_style=ft.TextStyle(color=secondary),
     )
@@ -1921,7 +2363,7 @@ def build_ui(page: ft.Page) -> None:
         can_reveal_password=True,
         bgcolor=bg,
         color="#c0c8e0",
-        border_color="#1e1e3a",
+        border_color="#2a1020",
         focused_border_color=accent,
         label_style=ft.TextStyle(color=secondary),
     )
@@ -1949,16 +2391,25 @@ def build_ui(page: ft.Page) -> None:
 
     settings_view = ft.Column(
         scroll=ft.ScrollMode.AUTO,
-        height=760,
+        height=820,
         spacing=10,
         visible=False,
         controls=[
             ft.Container(height=10),
-            ft.Text("НАЛАШТУВАННЯ", color=accent, size=13,
-                    weight=ft.FontWeight.BOLD),
-            ft.Divider(color="#1e1e3a", height=10),
+            ft.Container(
+                content=ft.Text("НАЛАШТУВАННЯ", color="#ffffff", size=11,
+                                weight=ft.FontWeight.BOLD),
+                bgcolor="#1a0810",
+                border_radius=3,
+                padding=ft.Padding(left=12, right=12, top=8, bottom=8),
+            ),
             # ── Ollama ────────────────────────────────────────────────────────
-            ft.Text("OLLAMA / GEMMA 4", color=secondary, size=11),
+            ft.Container(
+                content=ft.Text("OLLAMA / GEMMA 4", color="#ffffff", size=10,
+                                weight=ft.FontWeight.W_700),
+                bgcolor="#1a0810", border_radius=3,
+                padding=ft.Padding(left=12, right=12, top=7, bottom=7),
+            ),
             ft.Text(
                 "Локальна модель — працює офлайн, без токенів.\n"
                 "Встанови Ollama та завантаж модель: ollama pull gemma4",
@@ -1975,8 +2426,12 @@ def build_ui(page: ft.Page) -> None:
             ], spacing=10),
             settings_status,
             # ── Gemini fallback ───────────────────────────────────────────────
-            ft.Divider(color="#1e1e3a", height=20),
-            ft.Text("GEMINI API (FALLBACK)", color=secondary, size=11),
+            ft.Container(
+                content=ft.Text("GEMINI API (FALLBACK)", color="#ffffff", size=10,
+                                weight=ft.FontWeight.W_700),
+                bgcolor="#1a0810", border_radius=3,
+                padding=ft.Padding(left=12, right=12, top=7, bottom=7),
+            ),
             ft.Text(
                 "Використовується лише якщо Ollama не запущено.\n"
                 "Залиш порожнім — буде використано ключ з config.py.",
@@ -1997,14 +2452,25 @@ def build_ui(page: ft.Page) -> None:
             ], spacing=10),
             gemini_status,
             # ── Швидкість мовлення ────────────────────────────────────────────
-            ft.Divider(color="#1e1e3a", height=20),
-            ft.Text("ШВИДКІСТЬ МОВЛЕННЯ", color=secondary, size=11),
+            ft.Container(
+                content=ft.Row([
+                    ft.Text("ШВИДКІСТЬ МОВЛЕННЯ", color="#ffffff", size=10,
+                            weight=ft.FontWeight.W_700),
+                    _rate_label,
+                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                bgcolor="#1a0810", border_radius=3,
+                padding=ft.Padding(left=12, right=12, top=7, bottom=7),
+            ),
             ft.Slider(min=100, max=300, value=190, divisions=20,
                       active_color=accent, thumb_color="#ffffff",
                       on_change=on_rate),
             # ── Тема ──────────────────────────────────────────────────────────
-            ft.Divider(color="#1e1e3a", height=20),
-            ft.Text("ТЕМА ІНТЕРФЕЙСУ", color=secondary, size=11),
+            ft.Container(
+                content=ft.Text("ТЕМА ІНТЕРФЕЙСУ", color="#ffffff", size=10,
+                                weight=ft.FontWeight.W_700),
+                bgcolor="#1a0810", border_radius=3,
+                padding=ft.Padding(left=12, right=12, top=7, bottom=7),
+            ),
             ft.Text(
                 "Вибери готову тему або введи свої HEX-кольори.",
                 color=secondary, size=11,
@@ -2049,9 +2515,10 @@ def build_ui(page: ft.Page) -> None:
 
     # ── Навігація ──────────────────────────────────────────────────────────────
     btn_main = ft.TextButton("TOMIX", style=ft.ButtonStyle(color=accent))
-    btn_cmds = ft.TextButton("КОМАНДИ", style=ft.ButtonStyle(color=secondary))
+    btn_cmds = ft.TextButton("COMMANDS", style=ft.ButtonStyle(color=secondary))
     btn_lab = ft.TextButton("PLUGIN LAB", style=ft.ButtonStyle(color=secondary))
     btn_settings = ft.TextButton("⚙", style=ft.ButtonStyle(color=secondary))
+    btn_help = ft.TextButton("?", style=ft.ButtonStyle(color=secondary))
 
     def _hide_all():
         main_view.visible = False
@@ -2096,6 +2563,7 @@ def build_ui(page: ft.Page) -> None:
     btn_cmds.on_click = switch_to_cmds
     btn_lab.on_click = switch_to_lab
     btn_settings.on_click = switch_to_settings
+    btn_help.on_click = lambda _e: os.startfile("COMMANDS.md")
 
     def _mode_label(mode: str) -> str:
         return "⬡ Gemma 4" if mode == "ollama" else "✦ Gemini"
@@ -2112,22 +2580,46 @@ def build_ui(page: ft.Page) -> None:
     ai_mode_btn.on_click = lambda e: _set_ai_mode("gemini" if AI_MODE == "ollama" else "ollama")
 
     main_column = ft.Column(
-        spacing=4,
+        spacing=0,
         controls=[
-            ft.Row([
-                ft.Row([
-                    ft.Text("TOMIX", size=24, weight=ft.FontWeight.BOLD, color=accent),
-                    ft.Text("AI Voice Assistant", size=11, color=secondary),
-                ]),
-                ft.Row([ai_mode_btn, btn_settings], spacing=8),
-            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-            ft.Row([btn_main, btn_cmds, btn_lab],
-                   alignment=ft.MainAxisAlignment.CENTER),
-            ft.Divider(color="#1e1e3a", height=10),
-            main_view,
-            commands_view,
-            plugin_lab_view,
-            settings_view,
+            # ── Banner header (dark crimson table-title row) ───────────────────
+            ft.Container(
+                bgcolor="#130810",
+                border=ft.Border(bottom=ft.BorderSide(2, accent)),
+                padding=ft.Padding(left=20, right=16, top=14, bottom=12),
+                content=ft.Row([
+                    ft.Column([
+                        ft.Row([
+                            ft.Text("TOMIX", size=20, weight=ft.FontWeight.BOLD,
+                                    color=accent),
+                            ft.Text("AI VOICE ASSISTANT", size=9, color=secondary,
+                                    weight=ft.FontWeight.W_600),
+                        ], spacing=10,
+                           vertical_alignment=ft.CrossAxisAlignment.END),
+                        ft.Text("Ctrl+Space — зупинити мову",
+                                color="#886677", size=9),
+                    ], spacing=2),
+                    ft.Row([ai_mode_btn, btn_help, btn_settings], spacing=8),
+                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+            ),
+            # ── Tab bar (table column-headers row) ────────────────────────────
+            ft.Container(
+                bgcolor="#0e0608",
+                border=ft.Border(bottom=ft.BorderSide(1, "#2a1020")),
+                padding=ft.Padding(left=12, right=12, top=0, bottom=0),
+                content=ft.Row([btn_main, btn_cmds, btn_lab],
+                               alignment=ft.MainAxisAlignment.START),
+            ),
+            # ── Content ───────────────────────────────────────────────────────
+            ft.Container(
+                padding=ft.Padding(left=20, right=20, top=8, bottom=20),
+                content=ft.Column([
+                    main_view,
+                    commands_view,
+                    plugin_lab_view,
+                    settings_view,
+                ], spacing=0),
+            ),
         ],
     )
 
