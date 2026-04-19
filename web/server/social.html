@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Thompson Studios</title>
+    <link rel="stylesheet" href="style.css">
+        <link rel="shortcut icon" href="favicon.ico" type="image/x-icon">
+</head>
+<body>
+    <div id="preloader"><div class="spinner"></div></div>
+
+
+    <nav>
+        <div class="logo">Thompson Studios</div>
+        <button class="burger" id="burger">
+            <span></span>
+            <span></span>
+            <span></span>
+        </button>
+        <ul>
+            <li><a href="index.html">Main Page</a></li>
+            <li><a href="community.html">Community</a></li>
+            <li><a href="social.html">Our Social Media</a></li>
+            <li><a href="profile.html">Profile</a></li>
+        </ul>
+    </nav>
+
+    <main>
+    <section class="media">
+    <h2>MY SOCIALS:</h2>
+    <div class="media-cards">
+
+        <div class="media-card">
+            <img src="github.png" width="60" style="margin-bottom: 15px;">
+                <h3>Github</h3>
+                <p>Stay up to date</p>
+                <a href="https://github.com/rub1-618" target="_blank" class="button-86">HERE</a>
+            </div>
+
+            <div class="media-card">
+                <img src="youtube.png" width="60" style="margin-bottom: 15px;">
+                <h3>YouTube</h3>
+                <p>See our content</p>
+                <a href="#" class="button-86">HERE</a>
+            </div>
+
+        </div>
+    </section>
+    </main>
+
+     <footer>
+        <p>© 2026 Thompson Studios. All rights reserved.</p>
+    </footer>
+
+    <svg xmlns="http://www.w3.org/2000/svg" style="display:none">
+    <defs>
+        <filter id="goo">
+        <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="blur" />
+        <feColorMatrix in="blur" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 35 -15" result="goo" />
+        <feComposite in="SourceGraphic" in2="goo" operator="atop"/>
+        </filter>
+    </defs>
+    </svg>
+
+    <div id="cursor" class="Cursor"></div>
+    <canvas id="grid-canvas"></canvas>
+    <script src="script.js"></script>
+</body>
+</html>

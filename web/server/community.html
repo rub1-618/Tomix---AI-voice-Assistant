@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Thompson Studios</title>
+    <link rel="stylesheet" href="style.css">
+        <link rel="shortcut icon" href="favicon.ico" type="image/x-icon">
+</head>
+<body>
+    <div id="preloader"><div class="spinner"></div></div>
+
+
+    <nav>
+        <div class="logo">Thompson Studios</div>
+        <button class="burger" id="burger">
+            <span></span>
+            <span></span>
+            <span></span>
+        </button>
+        <ul>
+            <li><a href="index.html">Main Page</a></li>
+            <li><a href="community.html">Community</a></li>
+            <li><a href="social.html">Our Social Media</a></li>
+            <li><a href="profile.html">Profile</a></li>
+        </ul>
+    </nav>
+
+    <section class="submit-plugin" id="submit-plugin-section" style="display:none">
+        <h2>Submit a Plugin</h2>
+        <form id="submit-plugin-form">
+            <input type="text" id="plugin-name" placeholder="Plugin name">
+            <div class="form-row">
+                <textarea id="plugin-code" placeholder="Plugin code"></textarea>
+                <textarea id="plugin-desc" placeholder="Description"></textarea>
+            </div>
+            <button type="submit" class="btn">Submit</button>
+        </form>
+        <p id="submit-message"></p>
+    </section>
+
+    <section class="plugins">
+        <h2>Community Plugins</h2>
+        <p id="login-hint">Login to make custom plugins and post them.</p>
+        <div class="plugins-grid" id="plugins-grid">
+            <div class="spinner"></div>
+        </div>
+    </section>
+
+    <footer>
+        <p>© 2026 Thompson Studios. All rights reserved.</p>
+    </footer>
+
+    <svg xmlns="http://www.w3.org/2000/svg" style="display:none">
+    <defs>
+        <filter id="goo">
+        <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="blur" />
+        <feColorMatrix in="blur" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 35 -15" result="goo" />
+        <feComposite in="SourceGraphic" in2="goo" operator="atop"/>
+        </filter>
+    </defs>
+    </svg>
+
+    <div id="cursor" class="Cursor"></div>
+    <canvas id="grid-canvas"></canvas>
+    <script src="script.js"></script>
+</body>
+</html>

@@ -1877,26 +1877,28 @@ def build_ui(page: ft.Page) -> None:
             refresh_cmd_list()
 
     # Поля вводу для нової команди
+    _hint_style = ft.TextStyle(color="#4a3a48", size=13)
+    _label_style = ft.TextStyle(color="#6a5060")
     name_field = ft.TextField(
         label="Назва програми",
         hint_text="напр. Chrome",
         bgcolor=bg, color="#c0c8e0",
         border_color="#2a1020", focused_border_color=accent,
-        label_style=ft.TextStyle(color=secondary),
+        label_style=_label_style, hint_style=_hint_style,
     )
     path_field = ft.TextField(
         label="Шлях до програми",
         hint_text=r"C:\Program Files\...pp.exe",
         bgcolor=bg, color="#c0c8e0",
         border_color="#2a1020", focused_border_color=accent,
-        label_style=ft.TextStyle(color=secondary),
+        label_style=_label_style, hint_style=_hint_style,
     )
     phrases_field = ft.TextField(
         label="Голосові команди (через кому)",
         hint_text="відкрий хром, запусти браузер",
         bgcolor=bg, color="#c0c8e0",
         border_color="#2a1020", focused_border_color=accent,
-        label_style=ft.TextStyle(color=secondary),
+        label_style=_label_style, hint_style=_hint_style,
     )
 
     def add_cmd(e):
@@ -2563,7 +2565,8 @@ def build_ui(page: ft.Page) -> None:
     btn_cmds.on_click = switch_to_cmds
     btn_lab.on_click = switch_to_lab
     btn_settings.on_click = switch_to_settings
-    btn_help.on_click = lambda _e: os.startfile("COMMANDS.md")
+    _base_dir = os.path.dirname(sys.executable if getattr(sys, "frozen", False) else os.path.abspath(__file__))
+    btn_help.on_click = lambda _e: os.startfile(os.path.join(_base_dir, "COMMANDS.md"))
 
     def _mode_label(mode: str) -> str:
         return "⬡ Gemma 4" if mode == "ollama" else "✦ Gemini"

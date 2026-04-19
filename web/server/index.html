@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Thompson Studios</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="shortcut icon" href="favicon.ico" type="image/x-icon">
+</head>
+<body>
+    <div id="preloader"><div class="spinner"></div></div>
+
+    <nav>
+        <div class="logo">Thompson Studios</div>
+        <button class="burger" id="burger">
+            <span></span>
+            <span></span>
+            <span></span>
+        </button>
+        <ul>
+            <li><a href="index.html">Main Page</a></li>
+            <li><a href="community.html">Community</a></li>
+            <li><a href="social.html">Our Social Media</a></li>
+            <li><a href="profile.html">Profile</a></li>
+        </ul>
+    </nav>
+
+        <section class="hero">
+        <h1>Tomix - AI Voice Assistant</h1>
+        <p>We'd like to introduce someone special. TOMIX isn't just an assistant — it's the voice that's always there for you. Whether you need answers at 3AM, someone to think out loud with, or just a helping hand through a busy day — TOMIX listens. Really listens.</p>
+        <p class="tagline">Tomix - do it your way!</p>
+        <a href="#" class="cta">
+        <span>Start Talking to Tomix</span>
+        <span>
+            <svg width="66px" height="43px" viewBox="0 0 66 43">
+            <g fill="none" stroke="#fff" stroke-width="2">
+                <path class="one" d="M40 20 L60 20"/>
+                <path class="two" d="M40 20 L60 20"/>
+                <path class="three" d="M50 10 L60 20 L50 30"/>
+            </g>
+            </svg>
+        </span>
+        </a>
+
+    </section>
+
+    <section class="features reveal">
+        <div class="card">
+            <h3>Simple to use</h3>
+            <p>Just say "Tomix" and start talking</p>
+        </div>
+        <div class="card">
+            <h3>Powerful AI</h3>
+            <p>Powered by Gemini and&nbsp;Ollama</p>
+        </div>
+        <div class="card">
+            <h3>Extensible</h3>
+            <p>Add plugins to expand functionality</p>
+        </div>
+    </section>
+
+    <section class="screenshots reveal">
+    <h2>See it in action</h2>
+    <div class="fan-container">
+        <img class="fan-card card-1" src="screen1.png">
+        <img class="fan-card card-2" src="screen2.png">
+        <img class="fan-card card-3" src="screen3.png">
+        <img class="fan-card card-4" src="screen4.png">
+    </div>
+    </section>
+
+
+    <section class="download reveal">
+        <h2>Try Tomix for free</h2>
+        <p>Download the console version — no subscription needed</p>
+        <a href="#" class="btn">Download .exe</a>
+    </section>
+
+    <section class="pricing reveal">
+    <h2>Choose your plan</h2>
+    <div class="pricing-cards">
+        <div class="pricing-card reveal-left">
+            <h3>Free</h3>
+            <p class="price">$0</p>
+            <ul>
+                <li>Ollama AI only</li>
+                <li>No plugins</li>
+                <li>Console (CLI) version</li>
+            </ul>
+            <a href="#" class="button-86">Download</a>
+        </div>
+
+        <div class="pricing-card featured reveal-right">
+            <h3>Pro</h3>
+            <p class="price">$5/mo</p>
+            <ul>
+                <li>Gemini Vision</li>
+                <li>Plugins support</li>
+                <li>Dialog history</li>
+                <li>Full GUI app</li>
+            </ul>
+            <a href="#" class="button-86">Subscribe</a>
+        </div>
+    </div>
+    </section>
+
+    <footer>
+        <p>© 2026 Thompson Studios. All rights reserved.</p>
+    </footer>
+
+    <svg xmlns="http://www.w3.org/2000/svg" style="display:none">
+    <defs>
+        <filter id="goo">
+        <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="blur" />
+        <feColorMatrix in="blur" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 35 -15" result="goo" />
+        <feComposite in="SourceGraphic" in2="goo" operator="atop"/>
+        </filter>
+    </defs>
+    </svg>
+
+    <div id="cursor" class="Cursor"></div>
+
+    <canvas id="grid-canvas"></canvas>
+    <script src="script.js"></script>
+</body>
+</html>

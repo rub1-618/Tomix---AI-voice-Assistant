@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Thompson Studios</title>
+    <link rel="stylesheet" href="style.css">
+        <link rel="shortcut icon" href="favicon.ico" type="image/x-icon">
+</head>
+<body>
+    <div id="preloader"><div class="spinner"></div></div>
+
+
+    <nav>
+        <div class="logo">Thompson Studios</div>
+        <button class="burger" id="burger">
+            <span></span>
+            <span></span>
+            <span></span>
+        </button>
+        <ul>
+            <li><a href="index.html">Main Page</a></li>
+            <li><a href="community.html">Community</a></li>
+            <li><a href="social.html">Our Social Media</a></li>
+            <li><a href="profile.html">Profile</a></li>
+        </ul>
+    </nav>
+        <!-- показывается если НЕ залогинен -->
+    <section class="auth" id="auth-section">
+    <div class="auth-tabs">
+        <button class="button-86" id="tab-login">Login</button>
+        <button class="button-86" id="tab-register">Register</button>
+    </div>
+
+    <form id="login-form">
+        <input type="email" placeholder="Email" id="login-email">
+        <input type="password" placeholder="Password" id="login-password">
+        <button type="submit" class="button-27">Sign in</button>
+    </form>
+
+    <form id="register-form" style="display:none">
+        <input type="email" placeholder="Email" id="reg-email">
+        <input type="password" placeholder="Password" id="reg-password">
+        <button type="submit" class="button-27">Create account</button>
+    </form>
+    
+    <p id="auth-message"></p>
+    </section>
+
+    <!-- показывается если залогинен -->
+    <section class="profile" id="profile-section" style="display:none">
+    <div class="profile-card">
+        <h2>Your Profile</h2>
+        <p>Email: <span id="prof-email"></span></p>
+        <p>Plan: <span id="prof-plan"></span></p>
+        <p>Key: <span id="prof-key"></span></p>
+        <button class="button-86" id="logout-btn">Log Out</button>
+    </div>
+    </section>
+
+
+
+    <footer>
+        <p>© 2026 Thompson Studios. All rights reserved.</p>
+    </footer>
+
+    <svg xmlns="http://www.w3.org/2000/svg" style="display:none">
+    <defs>
+        <filter id="goo">
+        <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="blur" />
+        <feColorMatrix in="blur" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 35 -15" result="goo" />
+        <feComposite in="SourceGraphic" in2="goo" operator="atop"/>
+        </filter>
+    </defs>
+    </svg>
+
+    <div id="cursor" class="Cursor"></div>
+    <canvas id="grid-canvas"></canvas>
+    <script src="script.js"></script>
+</body>
+</html>
