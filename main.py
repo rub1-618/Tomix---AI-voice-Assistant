@@ -854,12 +854,12 @@ OPTS = {
         "confirm_yes": (
             "так","вірно","підтверджую","правильно","погоджуюсь","ок","окей","добре","звісно","авжеж",
             "да","верно","правильно","согласен","конечно","ага",
-            "yes","confirm","correct","sure","ok","okay","agreed","absolutely","yep",
+            "yes", "affirmative", "confirm","correct","sure","ok","okay","agreed","absolutely","yep",
         ),
         "confirm_no": (
             "ні","скасуй","відміна","не треба","відмовляюсь","неправильно","помилка",
             "нет","отмена","не надо","неправильно","ошибка",
-            "no","cancel","abort","wrong","stop it","never mind","nope",
+            "no","negative","cancel","abort","wrong","stop it","never mind","nope",
         ),
         "screen": (
             # укр
@@ -2599,6 +2599,13 @@ def build_ui(page: ft.Page) -> None:
                                     weight=ft.FontWeight.W_600),
                         ], spacing=10,
                            vertical_alignment=ft.CrossAxisAlignment.END),
+                        ft.Row([
+                            ft.Text(
+                                f"⬡ {OLLAMA_MODEL.upper()} (Ollama)" if AI_MODE == "ollama" else "✦ Gemini API",
+                                size=9, color="#20cccc" if AI_MODE == "ollama" else "#a78bfa",
+                                weight=ft.FontWeight.W_600,
+                            ),
+                        ], spacing=4),
                         ft.Text("Ctrl+Space — зупинити мову",
                                 color="#886677", size=9),
                     ], spacing=2),

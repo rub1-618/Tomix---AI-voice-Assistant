@@ -20,7 +20,6 @@ class RegisterRequest(BaseModel):
     email: str
     password: str
 
-
 class LoginRequest(BaseModel):
     email: str
     password: str
@@ -52,7 +51,6 @@ def validate(key: str, hwid: str, db: Session = Depends(get_db)):
     elif license.hwid != hwid:
         raise HTTPException(403, "Key is attached to the machine")
 
-
 @app.post("/register")
 def register(data: RegisterRequest, db: Session = Depends(get_db)):
     # проверяем что email не занят
@@ -72,8 +70,6 @@ def register(data: RegisterRequest, db: Session = Depends(get_db)):
     db.add(license)
     db.commit()
     return {"email": user.email, "key": key, "plan": "free"}
-
-
 
 @app.post("/login")
 def login(data: LoginRequest, db: Session = Depends(get_db)):
@@ -100,5 +96,3 @@ def plugins(data: PluginRequest, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(plugin)
     return {"name": plugin.name, "description": plugin.description, "code": plugin.code, "author_id": plugin.author_id, "status": "pending"}
-
-
