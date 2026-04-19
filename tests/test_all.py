@@ -12,7 +12,7 @@ downloads = random.randint(0, 1000)
 code = "test code"
 author_id = random.randint(1, 9999)
 is_verified = False
-
+email_val = f"test_val{random.randint(1000,9999)}@test.com"
 
 
 def setup_module():
@@ -74,10 +74,19 @@ def test_post_login():
     r = client.post("/login", json={"email": email, "password": "123"})
     assert "key" in r.json()
     assert r.json()["plan"] == "free"
+ 
+def test_post_login_wrong_password():
+    r = client.post("/login", json={"email": email, "password": "wrongpass"})
+    assert r.status_code == 401
 
 def test_get_validate_invalid_key():
     r = client.get("/validate", params={"key": key, "hwid": hwid})
     assert r.status_code == 404
+
+def test_get_validate():
+    reg = client.post("/register", json={"email": email_val, "password": "123"})
+    r = client.get("/validate", params={"key": reg.json()["key"], "hwid": hwid})
+    assert r.status_code == 200
 
 def test_get_plugins():
     r = client.get("/plugins")
@@ -177,3 +186,23 @@ def test_recognize_cmd_commands():
 
     result = recognize_cmd("зміни назву файлу")
     assert result["cmd"] == "file_rename"
+
+def test_recognize_cmd_fuzzy():
+
+    result = recognize_cmd("стопп")
+    assert result["percent"] >= 60
+    assert result["cmd"] == "stop"
+
+    result = recognize_cmd("котраа годиинна")
+    assert result["percent"] >= 60
+    assert result["cmd"] == "ctime"
+
+def test_recognise_cmd_fuzzy_rubish():
+    result = recognize_cmd("фдлоы р ав длфрм")
+    assert not result["percent"] >= 60
+
+    result = recognize_cmd("ліоварп дфлам")
+    assert not result["percent"] >= 60
+
+    result = recognize_cmd("ядажлоп мофу кщжшшп")
+    assert not result["percent"] >= 60
