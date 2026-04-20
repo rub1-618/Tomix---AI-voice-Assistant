@@ -138,10 +138,10 @@ def split_by_language(text: str) -> list:
             continue
         if re.search(r'[A-Za-z]', clean):
             result.append(("en", clean))
-        elif re.search(r'[іїєґІЇЄҐ]', clean):
-            result.append(("uk", clean))
-        else:
+        elif re.search(r'[ёъыЁЪЫ]', clean):
             result.append(("ru", clean))
+        else:
+            result.append(("uk", clean))
     return result
 
 # ── TTS ────────────────────────────────────────────────────────────────────────
@@ -218,7 +218,7 @@ def speech_worker() -> None:
         text = speech_queue.get()
         is_speaking = True
         log_queue.put(("__state__", "speaking"))
-        log_queue.put(("jarvis", text))
+        log_queue.put(("tomix", text))
 
         segments = split_by_language(text)
         for lang, segment in segments:
@@ -1476,6 +1476,7 @@ def execute_cmd(cmd: str, raw_text: str) -> None:
         elif raw_text.strip():
             for sentence in ask_ai_stream(raw_text):
                 speak(sentence)
+                log_queue.put(("tomix", sentence))
 
 
 # ── Распознавание речи ─────────────────────────────────────────────────────────
@@ -1819,7 +1820,7 @@ def build_ui(page: ft.Page) -> None:
                     ("Ви: " if is_user else "Tomix: ") + text,
                     color="#c0c8e0" if is_user else accent,
                     size=12, selectable=True,
-                ),
+                ), 
                 bgcolor="#131328" if is_user else "#1a0f1f",
                 border_radius=3,
                 padding=ft.Padding(left=10, right=10, top=6, bottom=6),
@@ -2720,7 +2721,8 @@ def build_ui(page: ft.Page) -> None:
                         _set_ai_mode(text)
                     else:
                         add_log(role, text)
-                        if role in ("user", "jarvis"):
+                        needs_update = True
+                        if role in ("user", "tomix"):
                             _tk_queue.put(("msg", role, text))
 
                 if needs_update:
