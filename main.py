@@ -118,8 +118,9 @@ def _strip_markdown(text: str) -> str:
 _RE_SENTENCE = re.compile(r'(?<=[.!?…])\s+')
 
 # індекси голосів (дізнався через enumerate(voices))
-VOICE_RU = 4  # Anton (RHVoice)
-VOICE_EN = 2# Microsoft David Desktop
+VOICE_RU = 0
+VOICE_EN = 0
+VOICE_UK = 0
 
 # ── Языковые утилиты ───────────────────────────────────────────────────────────
 def split_by_language(text: str) -> list:
@@ -137,6 +138,8 @@ def split_by_language(text: str) -> list:
             continue
         if re.search(r'[A-Za-z]', clean):
             result.append(("en", clean))
+        elif re.search(r'[іїєґІЇЄҐ]', clean):
+            result.append(("uk", clean))
         else:
             result.append(("ru", clean))
     return result
@@ -198,6 +201,14 @@ def speech_worker() -> None:
         print(f"[info] Доступно голосів: {len(voices)}")
         for i, v in enumerate(voices):
             print(f"  [{i}] {v.name}")
+        global VOICE_EN, VOICE_UK, VOICE_RU
+        for i, v in enumerate(voices):
+            if v.name == "Microsoft David Desktop":
+                VOICE_EN = i
+            elif v.name == "Anatol":
+                VOICE_UK = i
+            elif v.name == "Aleksandr":
+                VOICE_RU = i
         print("[info] TTS готовий (PowerShell режим, голоси кешовані)")
     except Exception as e:
         print(f"[error][TTS init] {e}")
@@ -212,7 +223,7 @@ def speech_worker() -> None:
         segments = split_by_language(text)
         for lang, segment in segments:
             if segment.strip():
-                voice_idx = VOICE_EN if lang == "en" else VOICE_RU
+                voice_idx = VOICE_EN if lang == "en" else VOICE_UK if lang == "uk" else VOICE_RU
                 _say_text(segment, voice_idx)
 
         is_speaking = False
