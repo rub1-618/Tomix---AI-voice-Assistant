@@ -1,20 +1,46 @@
- - Tomix — My Personal AI Assistant
-Welcome! This is my pet project that I am actively developing. Tomix isn't just another chatbot. It’s an ambitious attempt to bring the iconic AI assistant from the Marvel movies into real-life workflows.
-"Everyone deserves an easier life!" - the slogan of the project.
+# Tomix — AI Voice Assistant
 
-🛠 What’s under the hood?
-I decided to go with a hybrid architecture to get the best of both worlds:
-Python: The "brain" of the project. It handles the Gemini API integration, natural language processing, and the core logic.
-Rust: The "muscles." I use Rust for high-performance system modules where memory safety and speed are critical (like screen capturing and system monitoring).
+> "Do it your way!"
 
- * Key Features
+Tomix is a personal AI voice assistant with a cyberpunk aesthetic. It combines Google Gemini AI with a local Ollama model, voice recognition, and a set of high-performance Rust system modules — all wrapped in a Flet desktop UI.
 
-> Gemini Intelligence: Powered by Google's Gemini API, Tomix understands complex context and maintains natural conversations.
-> Vision Capabilities: Tomix can "see" your screen, analyze what's happening, and provide real-time assistance.
-> System Mastery: Controls windows, monitors hardware stats (CPU/RAM/GPU), and automates repetitive tasks.
-> Extensibility (The Best Part): The project is fully modular. Anyone can write their own Python methods and import them as plugins to customize Tomix for their specific needs.
+---
 
- => Getting Started
+## Features
+
+- **Voice commands** in Ukrainian, Russian, and English with fuzzy matching
+- **Gemini AI** with Google Search grounding for real-time answers
+- **Ollama** local AI for offline mode (no internet required)
+- **Screen analysis** — Tomix can see your screen and describe it via Gemini Vision
+- **Music control** — play/pause/next/prev, now playing info via WinRT
+- **File operations** — read, write, append, list, delete, rename via voice
+- **Window management** — minimize, restore, hide all except one app
+- **Reminders** — "remind me in 10 minutes"
+- **Dictation** — type text anywhere via voice + Ctrl+V
+- **Plugin system** — write Python plugins, AI verifies them for security before install
+- **Floating overlay** — always-on-top status window
+- **Keyboard shortcuts** — Ctrl+1/2/3/4 to switch tabs, Ctrl+Space to stop speech
+
+---
+
+## Architecture
+
+**Python** — app logic, Gemini/Ollama AI, voice recognition (Google Speech API), Flet UI
+
+**Rust modules** (compiled via Maturin):
+| Module | Purpose |
+|---|---|
+| `jarvis_stats` | CPU / RAM / GPU temperature |
+| `screen_catcher` | Screenshots to Base64 PNG |
+| `audio_viz` | Microphone audio visualization |
+| `media_ctrl` | Media keys + GSMTC now-playing info |
+| `file_ops` | File operations via std::fs + walkdir |
+
+**License server** — FastAPI + SQLite on Raspberry Pi 3B+, served via nginx + uvicorn
+
+---
+
+## Quick Start (from source)
 
 ### Requirements
 - Windows 10/11
@@ -30,22 +56,24 @@ git clone https://github.com/rub1-618/Tomix---AI-voice-Assistant.git
 cd Tomix---AI-voice-Assistant
 ```
 
-**2. Install Python dependencies**
+**2. Install voices (RHVoice — Anatol UA + Aleksandr RU)**
 ```bash
-pip install -r requirements.txt
+python setup/setup.py
 ```
 
-**3. Create `config.py` with your Gemini API key**
-```python
-GEMINI_KEY = "your_key_here"
+**3. Install Python dependencies**
+```bash
+pip install -r requirements.txt
+pip install pygetwindow pyautogui certifi keyboard
 ```
 
 **4. Compile Rust modules**
 ```bash
-cd plugins_rust/media_ctrl && python -m maturin build --release --out ../../dist && cd ../..
-cd plugins_rust/jarvis_stats && python -m maturin build --release --out ../../dist && cd ../..
-cd plugins_rust/screen_catcher && python -m maturin build --release --out ../../dist && cd ../..
-pip install dist/media_ctrl-0.1.0-cp313-cp313-win_amd64.whl dist/jarvis_stats-0.1.0-cp313-cp313-win_amd64.whl dist/screen_catcher-0.1.0-cp313-cp313-win_amd64.whl --force-reinstall
+cd plugins_rust/jarvis_stats   && maturin develop && cd ../..
+cd plugins_rust/screen_catcher && maturin develop && cd ../..
+cd plugins_rust/audio_viz      && maturin develop && cd ../..
+cd plugins_rust/media_ctrl     && maturin develop && cd ../..
+cd plugins_rust/file_ops       && maturin develop && cd ../..
 ```
 
 **5. Run**
@@ -53,12 +81,33 @@ pip install dist/media_ctrl-0.1.0-cp313-cp313-win_amd64.whl dist/jarvis_stats-0.
 python main.py
 ```
 
- => Roadmap
-Currently in Early Beta. Here is the plan:
+Enter your Gemini API key in the Settings tab on first launch.
 
-1. Finalize core features and optimize the Python-Rust bridge.
-2. Release a portable build for easier installation.
-3. The Big Goal: Launch a dedicated website with a license system and a Community Hub where users can share their own modules and ideas.
-4. Rebranding (to avoid any legal issues with Marvel, haha).
+---
 
-P.S. I’m still a student and learning every day. There might be some "creative" workarounds in the code, but I'm striving for best practices. If you have any ideas, feel free to reach out!
+## Download
+
+Get the latest prebuilt `.exe` from [Releases](https://github.com/rub1-618/Tomix---AI-voice-Assistant/releases).
+
+> Run `setup/setup.py` first to install the required TTS voices.
+
+---
+
+## Voice Commands
+
+See [COMMANDS.md](COMMANDS.md) for the full list of voice commands.
+
+---
+
+## Tech Stack
+
+| Layer | Technologies |
+|---|---|
+| UI | Flet 0.84 |
+| AI | Google Gemini, Ollama (Gemma) |
+| Voice input | SpeechRecognition + PyAudio (Google Speech API) |
+| Voice output | Windows SAPI5 via PowerShell, RHVoice |
+| System modules | Rust + PyO3 + Maturin |
+| Fuzzy matching | fuzzywuzzy |
+| License server | FastAPI, SQLAlchemy, SQLite, nginx, Raspberry Pi 3B+ |
+| Tests | pytest + FastAPI TestClient |
