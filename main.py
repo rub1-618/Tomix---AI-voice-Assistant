@@ -165,7 +165,7 @@ def _say_text(text: str, voice_idx: int) -> None:
     try:
         # прибираємо лапки + markdown щоб не зламати PowerShell
         clean = _strip_markdown(text)
-        safe_text = clean.replace("'", " ").replace('"', ' ').replace(';', ',')
+        safe_text = clean.replace("'", " ").replace('"', ' ').replace(';', ',').replace('\n', ' ').replace('\r', ' ')
 
         # голос з кешу (без pyttsx3.init на кожен виклик)
         if _VOICE_NAMES and voice_idx < len(_VOICE_NAMES):
@@ -597,7 +597,7 @@ def ask_ai_stream(message: str):
                 token = chunk["message"]["content"]
                 buf += token
                 full += token
-                # віддаємо завершені речення
+                # віддаємо завершені реченняя
                 while True:
                     m = _RE_SENTENCE.search(buf)
                     if not m:
@@ -613,7 +613,7 @@ def ask_ai_stream(message: str):
         except Exception as e:
             print(f"[warn][ollama stream] {e} — falling back to Gemini")
 
-    # — Gemini (fallback, не підтримує stream з tools, читаємо одразу) ─────────
+    # — Gemini (fallback, не підтримує stream з tools, читаємо одаразу) ─────────
     if not _ai_model:
         _ai_model = get_best_model()
     try:
@@ -671,20 +671,7 @@ def analyze_screen(prompt: str = "Що ти бачиш на екрані? Опи
     except Exception as e:
         return f"Сер, скріншот не вдався: {e}"
 
-    # — Ollama vision (primary) ————————————————————
-    if AI_MODE == "ollama" and _ollama_available():
-        try:
-            import ollama as _ol
-            resp = _ol.chat(
-                model=OLLAMA_MODEL,
-                messages=[{"role": "user", "content": prompt, "images": [b64_image]}],
-                options={"temperature": 0.5, "num_predict": 512},
-            )
-            return resp["message"]["content"].strip()
-        except Exception as e:
-            print(f"[warn][ollama vision] {e} — falling back to Gemini")
-
-    # — Gemini vision (fallback) ———————————————————
+    # — Gemini vision (завжди для аналізу екрану) ———————————————————
     if not _ai_model:
         _ai_model = get_best_model()
     try:
@@ -1142,6 +1129,7 @@ def execute_cmd(cmd: str, raw_text: str) -> None:
         s = get_system_stats()
         gpu = f"Відеокарта {round(s['gpu_temp'])}C." if s["gpu_temp"] else "Відеокарту не знайдено."
         speak(f"Процесор {round(s['cpu'])}%, ОЗП {round(s['ram'])}%. {gpu}")
+        
     elif cmd == "wakeup":
         speak("З поверненням, татку.")
         track = os.path.join(os.path.dirname(__file__), "extra", "The_Clash_-_Should_I_Stay_or_Should_I_Go_Remastered_(SkySound.cc).mp3")
@@ -1255,7 +1243,7 @@ def execute_cmd(cmd: str, raw_text: str) -> None:
             _dictation_pending = text
             speak(f"Друкую фразу: {text}. Все вірно, сер?")
         else:
-            # Якщо parse_dictation не знайшов текст — просимо повторити
+            # Якщо parse_dictation не знайшов текст - повтор
             speak("Сер, що саме надрукувати?")
 
     elif raw_text and any(raw_text.lower().startswith(kw) for kw in
@@ -1511,7 +1499,6 @@ def execute_cmd(cmd: str, raw_text: str) -> None:
         elif raw_text.strip():
             for sentence in ask_ai_stream(raw_text):
                 speak(sentence)
-                log_queue.put(("tomix", sentence))
 
 
 # ── Распознавание речи ─────────────────────────────────────────────────────────
@@ -1818,7 +1805,12 @@ def build_ui(page: ft.Page) -> None:
         expand=True,
         visible=True,
     )
-    log_column = ft.Column(spacing=6, scroll=ft.ScrollMode.AUTO)
+    log_column = ft.Column(
+        controls=[log_empty],
+        spacing=6,
+        scroll=ft.ScrollMode.ALWAYS,
+        expand=True,
+    )
     log_container = ft.Container(
         content=ft.Column([
             ft.Container(
@@ -1831,11 +1823,10 @@ def build_ui(page: ft.Page) -> None:
                 padding=ft.Padding(left=12, right=12, top=7, bottom=7),
             ),
             ft.Container(
-                content=ft.Stack([log_empty, log_column]),
+                content=log_column,
                 bgcolor=bg,
                 padding=ft.Padding(left=12, right=12, top=8, bottom=8),
                 height=186,
-                clip_behavior=ft.ClipBehavior.HARD_EDGE,
             ),
         ], spacing=0),
         border_radius=0,
@@ -1845,7 +1836,8 @@ def build_ui(page: ft.Page) -> None:
 
     def add_log(role: str, text: str) -> None:
         is_user = (role == "user")
-        log_empty.visible = False
+        if log_empty in log_column.controls:
+            log_column.controls.remove(log_empty)
         # обмежуємо до 60 повідомлень
         if len(log_column.controls) > 60:
             log_column.controls.pop(0)
@@ -2479,8 +2471,6 @@ def build_ui(page: ft.Page) -> None:
         page.update()
 
     settings_view = ft.Column(
-        scroll=ft.ScrollMode.AUTO,
-        height=820,
         spacing=10,
         visible=False,
         controls=[
@@ -2540,6 +2530,20 @@ def build_ui(page: ft.Page) -> None:
                 ),
             ], spacing=10),
             gemini_status,
+            ft.Row([
+                ft.OutlinedButton(
+                    "🌐 Отримати ключ",
+                    style=ft.ButtonStyle(color=accent),
+                    on_click=lambda _: __import__("webbrowser").open("https://aistudio.google.com"),
+                ),
+                ft.OutlinedButton(
+                    "📄 Інструкція",
+                    style=ft.ButtonStyle(color=secondary),
+                    on_click=lambda _: __import__("os").startfile(
+                        str(Path(__file__).parent / "extra" / "gemini_key_setup.txt")
+                    ),
+                ),
+            ], spacing=10),
             # ── Швидкість мовлення ────────────────────────────────────────────
             ft.Container(
                 content=ft.Row([
@@ -2687,6 +2691,7 @@ def build_ui(page: ft.Page) -> None:
 
     main_column = ft.Column(
         spacing=0,
+        expand=True,
         controls=[
             # ── Banner header (dark crimson table-title row) ───────────────────
             ft.Container(
@@ -2726,12 +2731,13 @@ def build_ui(page: ft.Page) -> None:
             # ── Content ───────────────────────────────────────────────────────
             ft.Container(
                 padding=ft.Padding(left=20, right=20, top=8, bottom=20),
+                expand=True,
                 content=ft.Column([
                     main_view,
                     commands_view,
                     plugin_lab_view,
                     settings_view,
-                ], spacing=0),
+                ], spacing=0, scroll=ft.ScrollMode.AUTO, expand=True),
             ),
         ],
     )
