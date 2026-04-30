@@ -56,7 +56,7 @@ git clone https://github.com/rub1-618/Tomix---AI-voice-Assistant.git
 cd Tomix---AI-voice-Assistant
 ```
 
-**2. Install voices (RHVoice — Anatol UA + Aleksandr RU)**
+**2. Install voices (RHVoice — Anatol UA + Aleksandr)**
 ```bash
 python setup/setup.py
 ```
