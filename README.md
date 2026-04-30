@@ -8,7 +8,7 @@ Tomix is a personal AI voice assistant with a cyberpunk aesthetic. It combines G
 
 ## Features
 
-- **Voice commands** in Ukrainian, Russian, and English with fuzzy matching
+- **Voice commands** in Ukrainian, and English and others with fuzzy matching
 - **Gemini AI** with Google Search grounding for real-time answers
 - **Ollama** local AI for offline mode (no internet required)
 - **Screen analysis** — Tomix can see your screen and describe it via Gemini Vision
